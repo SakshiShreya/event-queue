@@ -33,11 +33,6 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func joinHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	// parse json from request body
 	var req struct {
 		Name      string `json:"name"`
@@ -63,11 +58,6 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func queueHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	tickets := q.GetAll()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -77,11 +67,6 @@ func queueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func callHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not alloed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	ticket, err := q.Call()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -93,11 +78,6 @@ func callHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func skipHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not alloed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	var req struct {
 		TicketID string `json:"ticket_id"`
 	}
