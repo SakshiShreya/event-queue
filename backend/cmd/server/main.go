@@ -18,8 +18,10 @@ func main() {
 
 	mux.HandleFunc("POST /join", joinHandler)
 	mux.HandleFunc("GET /queue", queueHandler)
+	mux.HandleFunc("GET /tickets/{id}", ticketHandler)
 	mux.HandleFunc("POST /call", callHandler)
 	mux.HandleFunc("POST /skip", skipHandler)
+	mux.HandleFunc("POST /serve", serveHandler)
 
 	// start server
 	port := ":8080"
@@ -27,9 +29,13 @@ func main() {
 	log.Fatal(http.ListenAndServe(port, mux))
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
+func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok"}`)
+	json.NewEncoder(w).Encode(v)
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func joinHandler(w http.ResponseWriter, r *http.Request) {
@@ -53,16 +59,27 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// return the ticket
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ticket)
+	writeJSON(w, ticket)
 }
 
 func queueHandler(w http.ResponseWriter, r *http.Request) {
 	tickets := q.GetAll()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"tickets": tickets,
 		"count":   len(tickets),
+	})
+}
+
+func ticketHandler(w http.ResponseWriter, r *http.Request) {
+	ticket, err := q.Get(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ticket":        ticket,
+		"position":      ticket.Position,
+		"waiting_count": q.WaitingCount(),
 	})
 }
 
@@ -72,12 +89,18 @@ func callHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ticket)
+	writeJSON(w, ticket)
 }
 
 func skipHandler(w http.ResponseWriter, r *http.Request) {
+	takeAction(w, r, q.Skip)
+}
+
+func serveHandler(w http.ResponseWriter, r *http.Request) {
+	takeAction(w, r, q.Serve)
+}
+
+func takeAction(w http.ResponseWriter, r *http.Request, do func(string) error) {
 	var req struct {
 		TicketID string `json:"ticket_id"`
 	}
@@ -88,12 +111,11 @@ func skipHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = q.Skip(req.TicketID)
+	err = do(req.TicketID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true}`)
+	writeJSON(w, map[string]bool{"success": true})
 }
