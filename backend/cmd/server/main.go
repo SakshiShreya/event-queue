@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"queue-app/internal/queue"
+	"time"
+
+	"github.com/rs/cors"
 )
 
 var q = queue.GetDefault()
@@ -23,10 +26,47 @@ func main() {
 	mux.HandleFunc("POST /skip", skipHandler)
 	mux.HandleFunc("POST /serve", serveHandler)
 
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{
+			"http://localhost:5173",
+		},
+		AllowedMethods: []string{http.MethodGet, http.MethodPost},
+		AllowedHeaders: []string{"Content-Type"},
+	})
+	handler := withLogging(c.Handler(mux))
+
 	// start server
 	port := ":8080"
 	fmt.Printf("Server starting on port %s\n", port)
-	log.Fatal(http.ListenAndServe(port, mux))
+	log.Fatal(http.ListenAndServe(port, handler))
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code that
+// gets written, since ResponseWriter itself doesn't expose it after the fact.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// withLogging wraps a handler, logging method, path, status, and duration
+// for every request. It's placed outermost (wrapping the CORS handler) so
+// it logs every request, including rejected preflights.
+func withLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// default to 200: if the handler never calls WriteHeader explicitly
+		// (e.g. it just writes a body), net/http implicitly sends 200 too.
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		next.ServeHTTP(rec, r)
+		log.Printf("%s %s %d %v", r.Method, r.URL.Path, rec.status, time.Since(start))
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
