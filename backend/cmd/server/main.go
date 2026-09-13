@@ -8,37 +8,40 @@ import (
 	"queue-app/internal/queue"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 )
 
 var q = queue.GetDefault()
 
 func main() {
-	mux := http.NewServeMux()
+	r := chi.NewRouter()
 
-	// endpoints
-	mux.HandleFunc("GET /health", healthHandler)
-
-	mux.HandleFunc("POST /join", joinHandler)
-	mux.HandleFunc("GET /queue", queueHandler)
-	mux.HandleFunc("GET /tickets/{id}", ticketHandler)
-	mux.HandleFunc("POST /call", callHandler)
-	mux.HandleFunc("POST /skip", skipHandler)
-	mux.HandleFunc("POST /serve", serveHandler)
-
-	c := cors.New(cors.Options{
+	r.Use(withLogging)
+	r.Use(chimiddleware.Recoverer)
+	r.Use(cors.New(cors.Options{
 		AllowedOrigins: []string{
 			"http://localhost:5173",
 		},
 		AllowedMethods: []string{http.MethodGet, http.MethodPost},
 		AllowedHeaders: []string{"Content-Type"},
-	})
-	handler := withLogging(c.Handler(mux))
+	}).Handler)
+
+	// endpoints
+	r.Get("/health", healthHandler)
+
+	r.Post("/join", joinHandler)
+	r.Get("/queue", queueHandler)
+	r.Get("/tickets/{id}", ticketHandler)
+	r.Post("/call", callHandler)
+	r.Post("/skip", skipHandler)
+	r.Post("/serve", serveHandler)
 
 	// start server
 	port := ":8080"
 	fmt.Printf("Server starting on port %s\n", port)
-	log.Fatal(http.ListenAndServe(port, handler))
+	log.Fatal(http.ListenAndServe(port, r))
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code that
@@ -111,7 +114,7 @@ func queueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ticketHandler(w http.ResponseWriter, r *http.Request) {
-	ticket, err := q.Get(r.PathValue("id"))
+	ticket, err := q.Get(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
