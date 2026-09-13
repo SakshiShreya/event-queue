@@ -173,7 +173,7 @@ func (q *Queue) Skip(ticketId string) error {
 
 	t, ok := q.byID[ticketId]
 	if !ok {
-		return fmt.Errorf("%w, %s", ErrNotFound, ticketId)
+		return fmt.Errorf("%w: %s", ErrNotFound, ticketId)
 	}
 	if t.Status != StatusWaiting && t.Status != StatusCalled {
 		return fmt.Errorf("%w: can only skip waiting or called tickets, got %q", ErrConflict, t.Status)
