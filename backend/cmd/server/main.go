@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -77,6 +78,32 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+type badRequest struct{ msg string }
+
+func (e badRequest) Error() string { return e.msg }
+
+func writeError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+
+	switch {
+	case errors.Is(err, queue.ErrValidation):
+		status = http.StatusBadRequest
+	case errors.Is(err, queue.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, queue.ErrConflict):
+		status = http.StatusConflict
+	default:
+		var br badRequest
+		if errors.As(err, &br) {
+			status = http.StatusBadRequest
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -90,14 +117,14 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeError(w, badRequest{"Invalid JSON"})
 		return
 	}
 
 	// add to queue
 	ticket, err := q.Join(req.Name, req.PartySize)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, err)
 		return
 	}
 
@@ -116,7 +143,7 @@ func queueHandler(w http.ResponseWriter, r *http.Request) {
 func ticketHandler(w http.ResponseWriter, r *http.Request) {
 	ticket, err := q.Get(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{
@@ -129,7 +156,7 @@ func ticketHandler(w http.ResponseWriter, r *http.Request) {
 func callHandler(w http.ResponseWriter, r *http.Request) {
 	ticket, err := q.Call()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, err)
 		return
 	}
 	writeJSON(w, ticket)
@@ -150,13 +177,17 @@ func takeAction(w http.ResponseWriter, r *http.Request, do func(string) error) {
 
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeError(w, badRequest{"Invalid JSON"})
+		return
+	}
+	if req.TicketID == "" {
+		writeError(w, badRequest{"ticket_id is required"})
 		return
 	}
 
 	err = do(req.TicketID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, err)
 		return
 	}
 

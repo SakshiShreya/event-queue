@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,6 +13,13 @@ const (
 	StatusCalled  = "called"
 	StatusSkipped = "skipped"
 	StatusDone    = "done"
+)
+
+// Sentinel Errors
+var (
+	ErrValidation = errors.New("validation error")
+	ErrNotFound   = errors.New("ticket not found")
+	ErrConflict   = errors.New("conflict")
 )
 
 // Ticket represents a person in the queue
@@ -54,10 +62,10 @@ func GetDefault() *Queue {
 func (q *Queue) Join(name string, partySize int) (*Ticket, error) {
 	// Validate
 	if name == "" {
-		return nil, fmt.Errorf("name cannot be empty")
+		return nil, fmt.Errorf("%w: name cannot be empty", ErrValidation)
 	}
 	if partySize <= 0 {
-		return nil, fmt.Errorf("party_size must be > 0")
+		return nil, fmt.Errorf("%w: party_size must be > 0", ErrValidation)
 	}
 
 	q.mu.Lock()
@@ -93,7 +101,7 @@ func (q *Queue) Position(ticketID string) (int, error) {
 
 	t, ok := q.byID[ticketID]
 	if !ok {
-		return 0, fmt.Errorf("ticket not found")
+		return 0, fmt.Errorf("%w: %s", ErrNotFound, ticketID)
 	}
 	if t.Status != StatusWaiting {
 		return 0, nil
@@ -109,7 +117,7 @@ func (q *Queue) Get(ticketId string) (*Ticket, error) {
 
 	t, ok := q.byID[ticketId]
 	if !ok {
-		return nil, fmt.Errorf("ticket not found")
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketId)
 	}
 	return q.snapshot(t), nil
 }
@@ -149,7 +157,7 @@ func (q *Queue) Call() (*Ticket, error) {
 	// The first waiting ticket is the 1st set slot — no scanning.
 	slot := q.waiting.FindKth(1)
 	if slot == 0 {
-		return nil, fmt.Errorf("no waiting tickets")
+		return nil, fmt.Errorf("%w: no waiting tickets", ErrConflict)
 	}
 
 	t := q.tickets[slot-1]
@@ -165,10 +173,10 @@ func (q *Queue) Skip(ticketId string) error {
 
 	t, ok := q.byID[ticketId]
 	if !ok {
-		return fmt.Errorf("ticket not found")
+		return fmt.Errorf("%w, %s", ErrNotFound, ticketId)
 	}
 	if t.Status != StatusWaiting && t.Status != StatusCalled {
-		return fmt.Errorf("can only skip waiting or called tickets")
+		return fmt.Errorf("%w: can only skip waiting or called tickets, got %q", ErrConflict, t.Status)
 	}
 
 	q.leaveline(t)
@@ -183,10 +191,10 @@ func (q *Queue) Serve(ticketId string) error {
 
 	t, ok := q.byID[ticketId]
 	if !ok {
-		return fmt.Errorf("ticket not found")
+		return fmt.Errorf("%w: %s", ErrNotFound, ticketId)
 	}
 	if t.Status != StatusCalled {
-		return fmt.Errorf("only called tickets can be served")
+		return fmt.Errorf("%w: only called tickets can be served, got %q", ErrConflict, t.Status)
 	}
 
 	q.leaveline(t) // already cleared by Call, but keep the transition self-contained
