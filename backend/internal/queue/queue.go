@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -59,7 +60,7 @@ func GetDefault() *Queue {
 }
 
 // Join adds a new ticket to the queue
-func (q *Queue) Join(name string, partySize int) (*Ticket, error) {
+func (q *Queue) Join(ctx context.Context, name string, partySize int) (*Ticket, error) {
 	// Validate
 	if name == "" {
 		return nil, fmt.Errorf("%w: name cannot be empty", ErrValidation)
@@ -111,7 +112,7 @@ func (q *Queue) Position(ticketID string) (int, error) {
 }
 
 // Get returns a single ticket with its position filled in. O(log n).
-func (q *Queue) Get(ticketId string) (*Ticket, error) {
+func (q *Queue) Get(ctx context.Context, ticketId string) (*Ticket, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -123,7 +124,7 @@ func (q *Queue) Get(ticketId string) (*Ticket, error) {
 }
 
 // WaitingCount returns how many people are still in line. O(log n).
-func (q *Queue) WaitingCount() (int, error) {
+func (q *Queue) WaitingCount(ctx context.Context) (int, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -131,7 +132,7 @@ func (q *Queue) WaitingCount() (int, error) {
 }
 
 // GetAll returns all tickets
-func (q *Queue) GetAll() ([]Ticket, error) {
+func (q *Queue) GetAll(ctx context.Context) ([]Ticket, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -150,7 +151,7 @@ func (q *Queue) GetAll() ([]Ticket, error) {
 }
 
 // Call marks the first ticket as called
-func (q *Queue) Call() (*Ticket, error) {
+func (q *Queue) Call(ctx context.Context) (*Ticket, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -167,7 +168,7 @@ func (q *Queue) Call() (*Ticket, error) {
 }
 
 // Skip marks a ticket as skipped
-func (q *Queue) Skip(ticketId string) error {
+func (q *Queue) Skip(ctx context.Context, ticketId string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -185,7 +186,7 @@ func (q *Queue) Skip(ticketId string) error {
 }
 
 // Serve marks a ticket as "done"
-func (q *Queue) Serve(ticketId string) error {
+func (q *Queue) Serve(ctx context.Context, ticketId string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

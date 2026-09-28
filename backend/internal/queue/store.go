@@ -1,11 +1,13 @@
 package queue
 
+import "context"
+
 type Store interface {
-	Join(name string, partySize int) (*Ticket, error)
-	Get(ticketId string) (*Ticket, error)
-	GetAll() ([]Ticket, error)
-	WaitingCount() (int, error)
-	Call() (*Ticket, error)
-	Skip(ticketId string) error
-	Serve(ticketId string) error
+	Join(ctx context.Context, name string, partySize int) (*Ticket, error)
+	Get(ctx context.Context, ticketId string) (*Ticket, error)
+	GetAll(ctx context.Context) ([]Ticket, error)
+	WaitingCount(ctx context.Context) (int, error)
+	Call(ctx context.Context) (*Ticket, error)
+	Skip(ctx context.Context, ticketId string) error
+	Serve(ctx context.Context, ticketId string) error
 }

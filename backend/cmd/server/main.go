@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
-	_ "github.com/tursodatabase/libsql-client-go/libsql"
 )
 
 var q queue.Store = queue.GetDefault()
@@ -144,7 +144,7 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// add to queue
-	ticket, err := q.Join(req.Name, req.PartySize)
+	ticket, err := q.Join(r.Context(), req.Name, req.PartySize)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -155,7 +155,7 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func queueHandler(w http.ResponseWriter, r *http.Request) {
-	tickets, err := q.GetAll()
+	tickets, err := q.GetAll(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -167,13 +167,13 @@ func queueHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ticketHandler(w http.ResponseWriter, r *http.Request) {
-	ticket, err := q.Get(chi.URLParam(r, "id"))
+	ticket, err := q.Get(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 
-	waitingCount, err := q.WaitingCount()
+	waitingCount, err := q.WaitingCount(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -187,7 +187,7 @@ func ticketHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func callHandler(w http.ResponseWriter, r *http.Request) {
-	ticket, err := q.Call()
+	ticket, err := q.Call(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -203,7 +203,7 @@ func serveHandler(w http.ResponseWriter, r *http.Request) {
 	takeAction(w, r, q.Serve)
 }
 
-func takeAction(w http.ResponseWriter, r *http.Request, do func(string) error) {
+func takeAction(w http.ResponseWriter, r *http.Request, do func(context.Context, string) error) {
 	var req struct {
 		TicketID string `json:"ticket_id"`
 	}
@@ -218,7 +218,7 @@ func takeAction(w http.ResponseWriter, r *http.Request, do func(string) error) {
 		return
 	}
 
-	err = do(req.TicketID)
+	err = do(r.Context(), req.TicketID)
 	if err != nil {
 		writeError(w, err)
 		return
