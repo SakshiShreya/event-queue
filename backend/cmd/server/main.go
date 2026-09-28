@@ -18,7 +18,7 @@ import (
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
 )
 
-var q = queue.GetDefault()
+var q queue.Store = queue.GetDefault()
 
 func main() {
 	if err := godotenv.Load(); err != nil {
@@ -54,12 +54,12 @@ func main() {
 	defer sqlDB.Close()
 	log.Println("connected to turso")
 
-	if err := db.InsertTestTicket(sqlDB); err != nil {
-		log.Fatalf("insert failed: %v", err)
-	}
-	if err := db.PrintAllTickets(sqlDB); err != nil {
-		log.Fatalf("select failed: %v", err)
-	}
+	// if err := db.InsertTestTicket(sqlDB); err != nil {
+	// 	log.Fatalf("insert failed: %v", err)
+	// }
+	// if err := db.PrintAllTickets(sqlDB); err != nil {
+	// 	log.Fatalf("select failed: %v", err)
+	// }
 
 	// start server
 	port := ":8080"
@@ -155,7 +155,11 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func queueHandler(w http.ResponseWriter, r *http.Request) {
-	tickets := q.GetAll()
+	tickets, err := q.GetAll()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, map[string]interface{}{
 		"tickets": tickets,
 		"count":   len(tickets),
@@ -168,10 +172,17 @@ func ticketHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+
+	waitingCount, err := q.WaitingCount()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
 	writeJSON(w, map[string]any{
 		"ticket":        ticket,
 		"position":      ticket.Position,
-		"waiting_count": q.WaitingCount(),
+		"waiting_count": waitingCount,
 	})
 }
 

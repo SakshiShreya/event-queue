@@ -123,15 +123,15 @@ func (q *Queue) Get(ticketId string) (*Ticket, error) {
 }
 
 // WaitingCount returns how many people are still in line. O(log n).
-func (q *Queue) WaitingCount() int {
+func (q *Queue) WaitingCount() (int, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	return q.waiting.Total()
+	return q.waiting.Total(), nil
 }
 
 // GetAll returns all tickets
-func (q *Queue) GetAll() []Ticket {
+func (q *Queue) GetAll() ([]Ticket, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -146,7 +146,7 @@ func (q *Queue) GetAll() []Ticket {
 		}
 		result = append(result, c)
 	}
-	return result
+	return result, nil
 }
 
 // Call marks the first ticket as called
@@ -218,3 +218,5 @@ func (q *Queue) snapshot(t *Ticket) *Ticket {
 	}
 	return &c
 }
+
+var _ Store = (*Queue)(nil)
