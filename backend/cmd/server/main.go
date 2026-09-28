@@ -54,6 +54,13 @@ func main() {
 	defer sqlDB.Close()
 	log.Println("connected to turso")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := db.Migrate(ctx, sqlDB); err != nil {
+		log.Fatalf("migrate failed: %v", err)
+	}
+	log.Println("migrated")
+
 	// if err := db.InsertTestTicket(sqlDB); err != nil {
 	// 	log.Fatalf("insert failed: %v", err)
 	// }

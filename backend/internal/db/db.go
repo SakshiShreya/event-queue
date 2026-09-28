@@ -1,11 +1,18 @@
 package db
 
 import (
+	"context"
 	"database/sql"
+	_ "embed"
 	"fmt"
+	"strings"
+	"time"
 
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
 )
+
+//go:embed schema.sql
+var schema string
 
 func Open(url, authToken string) (*sql.DB, error) {
 	db, err := sql.Open("libsql", url+"?authToken="+authToken)
@@ -17,6 +24,34 @@ func Open(url, authToken string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping turso %w", err)
 	}
 	return db, nil
+}
+
+func Migrate(ctx context.Context, db *sql.DB) error {
+	statements := strings.Split(schema, ";")
+
+	for _, statement := range statements {
+		statement := strings.TrimSpace(statement)
+		if statement == "" {
+			continue
+		}
+
+		_, err := db.ExecContext(ctx, statement)
+
+		if err != nil {
+			return fmt.Errorf("exec %q: %w", statement, err)
+		}
+	}
+
+	_, err := db.ExecContext(
+		ctx,
+		"INSERT OR IGNORE INTO Queue (id, name, created_at) VALUES ('default', 'Default', ?)",
+		time.Now().Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
+	return nil
 }
 
 // func InsertTestTicket(db *sql.DB) error {
