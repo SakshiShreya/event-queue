@@ -6,17 +6,25 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"queue-app/internal/db"
 	"queue-app/internal/queue"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/joho/godotenv"
 	"github.com/rs/cors"
+	_ "github.com/tursodatabase/libsql-client-go/libsql"
 )
 
 var q = queue.GetDefault()
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Printf("no .env file loaded: %v", err)
+	}
+
 	r := chi.NewRouter()
 
 	r.Use(withLogging)
@@ -38,6 +46,20 @@ func main() {
 	r.Post("/call", callHandler)
 	r.Post("/skip", skipHandler)
 	r.Post("/serve", serveHandler)
+
+	sqlDB, err := db.Open(os.Getenv("TURSO_DATABASE_URL"), os.Getenv("TURSO_AUTH_TOKEN"))
+	if err != nil {
+		log.Fatalf("failed to connect to turso: %v", err)
+	}
+	defer sqlDB.Close()
+	log.Println("connected to turso")
+
+	if err := db.InsertTestTicket(sqlDB); err != nil {
+		log.Fatalf("insert failed: %v", err)
+	}
+	if err := db.PrintAllTickets(sqlDB); err != nil {
+		log.Fatalf("select failed: %v", err)
+	}
 
 	// start server
 	port := ":8080"
