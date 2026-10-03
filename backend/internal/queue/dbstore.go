@@ -134,13 +134,18 @@ func (s *DBStore) GetAll(ctx context.Context) ([]Ticket, error) {
 			position++
 		}
 
+		ticketPosition := position
+		if status != StatusWaiting {
+			ticketPosition = 0
+		}
+
 		ticket := Ticket{
 			ID:        strconv.FormatInt(id, 10),
 			Name:      displayName,
 			Status:    status,
 			JoinedAt:  int64(joinedAt),
 			PartySize: partySize,
-			Position:  position,
+			Position:  ticketPosition,
 		}
 		tickets = append(tickets, ticket)
 	}
