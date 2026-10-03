@@ -75,7 +75,7 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 func (s *DBStore) Get(ctx context.Context, ticketId string) (*Ticket, error) {
 	id, err := strconv.ParseInt(ticketId, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid id %s: %w", ticketId, err)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketId)
 	}
 
 	var displayName, status string
