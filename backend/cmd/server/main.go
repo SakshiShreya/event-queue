@@ -36,6 +36,7 @@ func main() {
 		AllowedMethods: []string{http.MethodGet, http.MethodPost},
 		AllowedHeaders: []string{"Content-Type"},
 	}).Handler)
+	r.Use(limitBody(4 << 10)) // 4 KB
 
 	// endpoints
 	r.Get("/health", healthHandler)
@@ -227,4 +228,15 @@ func takeAction(w http.ResponseWriter, r *http.Request, do func(context.Context,
 	}
 
 	writeJSON(w, map[string]bool{"success": true})
+}
+
+// limitBody caps how many bytes a handler can read from the request body.
+// Reads past the limit fail with *http.MaxBytesError.
+func limitBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
 }
