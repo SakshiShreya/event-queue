@@ -38,9 +38,10 @@ backend/
     │   ├── db.go             # opens the connection, runs migrations
     │   └── schema.sql        # table definitions (embedded into the binary)
     └── queue/
-        ├── ticket.go         # Ticket type, status constants, sentinel errors
+        ├── ticket.go         # Ticket type, status constants, limits, sentinel errors
         ├── store.go          # Store interface the handlers depend on
-        └── dbstore.go        # Turso-backed implementation of Store
+        ├── dbstore.go        # Turso-backed implementation of Store
+        └── fenwick.go        # Fenwick tree (learning exercise, not used by the server)
 ```
 
 Handlers only talk to the `Store` interface, so the storage layer can change without touching `main.go`.
@@ -75,18 +76,19 @@ Handlers only talk to the `Store` interface, so the storage layer can change wit
 ### Validation (`/join`)
 
 - `name` is trimmed of surrounding whitespace, must not be empty, and is limited to 50 characters.
-- `party_size` must be between 1 and 20.
+- `party_size` is optional. If it is missing or `0` it defaults to `1`. Otherwise it must be between 1 and 20.
+- Request bodies are limited to 4 KB.
 
 ### Errors
 
 Every error is returned as JSON: `{"error": "message"}`.
 
-| Status | Meaning                                                             |
-| ------ | ------------------------------------------------------------------- |
-| 400    | Invalid JSON, missing `ticket_id`, or failed validation             |
-| 404    | Ticket doesn't exist (including ids that aren't numbers)            |
-| 409    | Action not allowed in the ticket's current state, or nobody to call |
-| 500    | Unexpected server or database error                                 |
+| Status | Meaning                                                                    |
+| ------ | -------------------------------------------------------------------------- |
+| 400    | Invalid JSON (including bodies over 4 KB), missing `ticket_id`, or failed validation |
+| 404    | Ticket doesn't exist (including ids that aren't numbers)                   |
+| 409    | Action not allowed in the ticket's current state, or nobody to call        |
+| 500    | Unexpected server or database error                                        |
 
 ## Ticket lifecycle
 
@@ -98,6 +100,8 @@ waiting ──call──▶ called ──serve──▶ done
 
 Only these transitions are allowed. Anything else returns `409`.
 
+The database also accepts a `serving` status (for a ticket that has been called and is now being helped), but no endpoint moves a ticket into it yet.
+
 ## How it works
 
 **Position is never stored.** A waiting ticket's position is the number of tickets in the same queue with status `waiting` and an id at or below its own, counted on every read. Because ids only increase, id order is join order.
@@ -108,10 +112,10 @@ Only these transitions are allowed. Anything else returns `409`.
 
 ## History
 
-The first version kept the queue in memory using a Fenwick tree for position tracking. It was removed once Turso persistence was in place. It still exists under the git tag `week7-inmemory`.
+The first version kept the queue in memory and used a Fenwick tree for position tracking. That in-memory queue was removed once Turso persistence was in place. The tree itself is kept in `internal/queue/fenwick.go` as a learning exercise, and the full in-memory version is available under the git tag `week7-inmemory`.
 
 ## Planned
 
-- A `serving` status between `called` and `done`, with a separate endpoint to finish
+- Endpoints for the `serving` status, and a separate endpoint to finish
 - Admin endpoints: reorder, reset, stats
 - Timestamps for `called_at` and `done_at` exposed in the API

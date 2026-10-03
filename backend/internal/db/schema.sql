@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS Ticket (
     queue_id TEXT NOT NULL REFERENCES Queue(id),
     display_name TEXT NOT NULL,
     party_size INTEGER NOT NULL DEFAULT 1,
-    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'called', 'done', 'skipped')),
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'called', 'serving', 'done', 'skipped')),
     joined_at INTEGER NOT NULL,
     called_at INTEGER,
     done_at INTEGER

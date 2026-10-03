@@ -2,13 +2,14 @@ package queue
 
 import "errors"
 
-const MAX_NAME_LENGTH = 50
-const MAX_PARTY_SIZE = 20
+const MaxNameLength = 50
+const MaxPartySize = 20
 
 // Ticket statuses
 const (
 	StatusWaiting = "waiting"
 	StatusCalled  = "called"
+	StatusServing = "serving"
 	StatusSkipped = "skipped"
 	StatusDone    = "done"
 )

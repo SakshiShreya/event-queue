@@ -37,8 +37,8 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	if name == "" {
 		return nil, fmt.Errorf("%w: name cannot be empty", ErrValidation)
 	}
-	if utf8.RuneCountInString(name) > MAX_NAME_LENGTH {
-		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MAX_NAME_LENGTH)
+	if utf8.RuneCountInString(name) > MaxNameLength {
+		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MaxNameLength)
 	}
 	if partySize < 0 {
 		return nil, fmt.Errorf("%w: party_size must be > 0", ErrValidation)
@@ -46,8 +46,8 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	if partySize == 0 {
 		partySize = 1
 	}
-	if partySize > MAX_PARTY_SIZE {
-		return nil, fmt.Errorf("%w: party_size must be < %d", ErrValidation, MAX_PARTY_SIZE)
+	if partySize > MaxPartySize {
+		return nil, fmt.Errorf("%w: party_size must be < %d", ErrValidation, MaxPartySize)
 	}
 
 	now := time.Now().Unix()
