@@ -2,6 +2,9 @@ package queue
 
 import "errors"
 
+const MAX_NAME_LENGTH = 50
+const MAX_PARTY_SIZE = 20
+
 // Ticket statuses
 const (
 	StatusWaiting = "waiting"
