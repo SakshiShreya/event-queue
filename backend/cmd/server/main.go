@@ -18,7 +18,7 @@ import (
 	"github.com/rs/cors"
 )
 
-var q queue.Store = queue.GetDefault()
+var q queue.Store
 
 func main() {
 	if err := godotenv.Load(); err != nil {
