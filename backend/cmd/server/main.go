@@ -61,12 +61,7 @@ func main() {
 	}
 	log.Println("migrated")
 
-	// if err := db.InsertTestTicket(sqlDB); err != nil {
-	// 	log.Fatalf("insert failed: %v", err)
-	// }
-	// if err := db.PrintAllTickets(sqlDB); err != nil {
-	// 	log.Fatalf("select failed: %v", err)
-	// }
+	q = queue.NewDBStore(sqlDB, "default")
 
 	// start server
 	port := ":8080"
