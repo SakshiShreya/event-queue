@@ -40,8 +40,11 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	if utf8.RuneCountInString(name) > MAX_NAME_LENGTH {
 		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MAX_NAME_LENGTH)
 	}
-	if partySize <= 0 {
+	if partySize < 0 {
 		return nil, fmt.Errorf("%w: party_size must be > 0", ErrValidation)
+	}
+	if partySize == 0 {
+		partySize = 1
 	}
 	if partySize > MAX_PARTY_SIZE {
 		return nil, fmt.Errorf("%w: party_size must be < %d", ErrValidation, MAX_PARTY_SIZE)
