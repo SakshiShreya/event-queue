@@ -28,5 +28,7 @@ type Ticket struct {
 	Position  int    `json:"position"`
 	Status    string `json:"status"`
 	JoinedAt  int64  `json:"joined_at"`
+	CalledAt  int64  `json:"called_at,omitempty"`
+	DoneAt    int64  `json:"done_at,omitempty"`
 	PartySize int    `json:"party_size"`
 }

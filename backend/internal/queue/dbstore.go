@@ -31,14 +31,6 @@ func (s *DBStore) position(ctx context.Context, id int64) (int, error) {
 	return position, err
 }
 
-// TRANSITION RULES
-// status can only transition like this:
-// Action	Allowed from	Moves to
-// call		waiting			called
-// skip		waiting, called	skipped
-// start	called			serving
-// done		serving			done
-
 func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket, error) {
 	name = strings.TrimSpace(name)
 	// Validate
@@ -48,7 +40,7 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	if utf8.RuneCountInString(name) > MaxNameLength {
 		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MaxNameLength)
 	}
-	if partySize < 0 || partySize > MaxPartySize {
+	if partySize < 1 || partySize > MaxPartySize {
 		return nil, fmt.Errorf("%w: party_size must be between 1 and %d", ErrValidation, MaxPartySize)
 	}
 
@@ -93,12 +85,13 @@ func (s *DBStore) Get(ctx context.Context, ticketId string) (*Ticket, error) {
 	}
 
 	var displayName, status string
-	var partySize, joinedAt int
+	var partySize int
+	var joinedAt, calledAt, doneAt int64
 	err = s.db.QueryRowContext(
 		ctx,
-		"SELECT id, display_name, party_size, status, joined_at FROM Ticket WHERE queue_id = ? AND id = ?",
+		"SELECT id, display_name, party_size, status, joined_at, COALESCE(called_at, 0), COALESCE(done_at, 0) FROM Ticket WHERE queue_id = ? AND id = ?",
 		s.queueID, id,
-	).Scan(&id, &displayName, &partySize, &status, &joinedAt)
+	).Scan(&id, &displayName, &partySize, &status, &joinedAt, &calledAt, &doneAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketId)
@@ -119,7 +112,9 @@ func (s *DBStore) Get(ctx context.Context, ticketId string) (*Ticket, error) {
 		ID:        strconv.FormatInt(id, 10),
 		Name:      displayName,
 		Status:    status,
-		JoinedAt:  int64(joinedAt),
+		JoinedAt:  joinedAt,
+		CalledAt:  calledAt,
+		DoneAt:    doneAt,
 		PartySize: partySize,
 		Position:  position,
 	}
@@ -128,7 +123,7 @@ func (s *DBStore) Get(ctx context.Context, ticketId string) (*Ticket, error) {
 }
 
 func (s *DBStore) GetAll(ctx context.Context) ([]Ticket, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, display_name, party_size, status, joined_at FROM Ticket WHERE queue_id = ? ORDER BY id", s.queueID)
+	rows, err := s.db.QueryContext(ctx, "SELECT id, display_name, party_size, status, joined_at, COALESCE(called_at, 0), COALESCE(done_at, 0) FROM Ticket WHERE queue_id = ? ORDER BY id", s.queueID)
 	if err != nil {
 		return nil, fmt.Errorf("get all: %w", err)
 	}
@@ -137,10 +132,10 @@ func (s *DBStore) GetAll(ctx context.Context) ([]Ticket, error) {
 	tickets := make([]Ticket, 0)
 	position := 0
 	for rows.Next() {
-		var id, joinedAt int64
+		var id, joinedAt, calledAt, doneAt int64
 		var displayName, status string
 		var partySize int
-		if err := rows.Scan(&id, &displayName, &partySize, &status, &joinedAt); err != nil {
+		if err := rows.Scan(&id, &displayName, &partySize, &status, &joinedAt, &calledAt, &doneAt); err != nil {
 			return nil, fmt.Errorf("scan ticket %w", err)
 		}
 
@@ -158,6 +153,8 @@ func (s *DBStore) GetAll(ctx context.Context) ([]Ticket, error) {
 			Name:      displayName,
 			Status:    status,
 			JoinedAt:  joinedAt,
+			CalledAt:  calledAt,
+			DoneAt:    doneAt,
 			PartySize: partySize,
 			Position:  ticketPosition,
 		}
@@ -194,6 +191,13 @@ func (s *DBStore) Call(ctx context.Context) (*Ticket, error) {
 	return s.Get(ctx, strconv.FormatInt(id, 10))
 }
 
+// TRANSITION RULES
+// status can only transition like this:
+// Action	Allowed from	Moves to
+// call		waiting			called
+// skip		waiting, called	skipped
+// start	called			serving
+// done		serving			done
 func (s *DBStore) transition(ctx context.Context, ticketId string, targetStatus string, startingStatuses ...string) error {
 	id, err := strconv.ParseInt(ticketId, 10, 64)
 	if err != nil {
