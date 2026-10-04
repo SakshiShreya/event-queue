@@ -24,7 +24,7 @@ func (s *DBStore) position(ctx context.Context, id int64) (int, error) {
 	var position int
 	err := s.db.QueryRowContext(
 		ctx,
-		"SELECT COUNT(*) FROM Ticket WHERE queue_id = ? AND status = 'waiting' AND id <= ?",
+		"SELECT COUNT(*) FROM Ticket WHERE queue_id = ? AND status = '"+StatusWaiting+"' AND id <= ?",
 		s.queueID, id,
 	).Scan(&position)
 
@@ -39,6 +39,10 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	}
 	if utf8.RuneCountInString(name) > MaxNameLength {
 		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MaxNameLength)
+	}
+
+	if partySize == 0 {
+		partySize = 1
 	}
 	if partySize < 1 || partySize > MaxPartySize {
 		return nil, fmt.Errorf("%w: party_size must be between 1 and %d", ErrValidation, MaxPartySize)
@@ -78,10 +82,10 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	return ticket, nil
 }
 
-func (s *DBStore) Get(ctx context.Context, ticketId string) (*Ticket, error) {
-	id, err := strconv.ParseInt(ticketId, 10, 64)
+func (s *DBStore) Get(ctx context.Context, ticketID string) (*Ticket, error) {
+	id, err := strconv.ParseInt(ticketID, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketId)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketID)
 	}
 
 	var displayName, status string
@@ -94,7 +98,7 @@ func (s *DBStore) Get(ctx context.Context, ticketId string) (*Ticket, error) {
 	).Scan(&id, &displayName, &partySize, &status, &joinedAt, &calledAt, &doneAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketId)
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, ticketID)
 		}
 		return nil, fmt.Errorf("get ticket: %w", err)
 	}
@@ -167,7 +171,7 @@ func (s *DBStore) WaitingCount(ctx context.Context) (int, error) {
 	var total int
 	err := s.db.QueryRowContext(
 		ctx,
-		"SELECT COUNT(*) FROM Ticket WHERE queue_id = ? AND status = 'waiting'",
+		"SELECT COUNT(*) FROM Ticket WHERE queue_id = ? AND status = '"+StatusWaiting+"'",
 		s.queueID,
 	).Scan(&total)
 
@@ -178,7 +182,7 @@ func (s *DBStore) Call(ctx context.Context) (*Ticket, error) {
 	var id int64
 	err := s.db.QueryRowContext(
 		ctx,
-		"UPDATE Ticket SET status = 'called', called_at = ? WHERE id = (SELECT id FROM Ticket WHERE queue_id = ? AND status = 'waiting' ORDER BY id LIMIT 1) RETURNING id",
+		"UPDATE Ticket SET status = '"+StatusCalled+"', called_at = ? WHERE id = (SELECT id FROM Ticket WHERE queue_id = ? AND status = '"+StatusWaiting+"' ORDER BY id LIMIT 1) RETURNING id",
 		time.Now().Unix(), s.queueID,
 	).Scan(&id)
 	if err != nil {
@@ -198,10 +202,10 @@ func (s *DBStore) Call(ctx context.Context) (*Ticket, error) {
 // skip		waiting, called	skipped
 // start	called			serving
 // done		serving			done
-func (s *DBStore) transition(ctx context.Context, ticketId string, targetStatus string, startingStatuses ...string) error {
-	id, err := strconv.ParseInt(ticketId, 10, 64)
+func (s *DBStore) transition(ctx context.Context, ticketID string, targetStatus string, startingStatuses ...string) error {
+	id, err := strconv.ParseInt(ticketID, 10, 64)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrNotFound, ticketId)
+		return fmt.Errorf("%w: %s", ErrNotFound, ticketID)
 	}
 
 	startingStatusesPlaceholder := strings.TrimSuffix(strings.Repeat("?,", len(startingStatuses)), ",")
@@ -232,7 +236,7 @@ func (s *DBStore) transition(ctx context.Context, ticketId string, targetStatus 
 		return nil
 	}
 
-	ticket, err := s.Get(ctx, ticketId)
+	ticket, err := s.Get(ctx, ticketID)
 	if err != nil {
 		return err
 	}
@@ -240,16 +244,16 @@ func (s *DBStore) transition(ctx context.Context, ticketId string, targetStatus 
 	return fmt.Errorf("%w: can't move ticket from %s to %s", ErrConflict, ticket.Status, targetStatus)
 }
 
-func (s *DBStore) Start(ctx context.Context, ticketId string) error {
-	return s.transition(ctx, ticketId, StatusServing, StatusCalled)
+func (s *DBStore) Start(ctx context.Context, ticketID string) error {
+	return s.transition(ctx, ticketID, StatusServing, StatusCalled)
 }
 
-func (s *DBStore) Skip(ctx context.Context, ticketId string) error {
-	return s.transition(ctx, ticketId, StatusSkipped, StatusWaiting, StatusCalled)
+func (s *DBStore) Skip(ctx context.Context, ticketID string) error {
+	return s.transition(ctx, ticketID, StatusSkipped, StatusWaiting, StatusCalled)
 }
 
-func (s *DBStore) Done(ctx context.Context, ticketId string) error {
-	return s.transition(ctx, ticketId, StatusDone, StatusServing)
+func (s *DBStore) Done(ctx context.Context, ticketID string) error {
+	return s.transition(ctx, ticketID, StatusDone, StatusServing)
 }
 
 var _ Store = (*DBStore)(nil)

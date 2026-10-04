@@ -138,7 +138,7 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 	// parse json from request body
 	var req struct {
 		Name      string `json:"name"`
-		PartySize *int   `json:"party_size"`
+		PartySize int    `json:"party_size"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -147,12 +147,8 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	partySize := 1
-	if req.PartySize != nil && *req.PartySize != 0 {
-		partySize = *req.PartySize
-	}
 	// add to queue
-	ticket, err := q.Join(r.Context(), req.Name, partySize)
+	ticket, err := q.Join(r.Context(), req.Name, req.PartySize)
 	if err != nil {
 		writeError(w, err)
 		return
