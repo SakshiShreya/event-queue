@@ -20,7 +20,7 @@ Waitlist queue API. People join a line, an admin calls them in order, and every 
    go run ./cmd/server
 ```
 
-The server listens on `http://localhost:8080`. On startup it connects to Turso, creates any missing tables, and ensures a `default` queue exists. CORS allows requests from `http://localhost:5173` (the Vite dev server).
+The server listens on `http://localhost:8080`. On startup it connects to Turso and creates any missing tables. CORS allows requests from `http://localhost:5173` (the Vite dev server).
 
 Quick check:
 
@@ -48,15 +48,18 @@ Handlers only talk to the `Store` interface, so the storage layer can change wit
 
 ## Endpoints
 
-| Method | Path            | Body                                | Description                                          |
-| ------ | --------------- | ----------------------------------- | ---------------------------------------------------- |
-| GET    | `/health`       | none                                | Health check                                         |
-| POST   | `/join`         | `{"name": "...", "party_size": 1}`  | Join the queue; returns the new ticket               |
-| GET    | `/queue`        | none                                | All tickets plus a count                             |
-| GET    | `/tickets/{id}` | none                                | One ticket, its live position, and the waiting count |
-| POST   | `/call`         | none                                | Calls the next waiting ticket (earliest to join)     |
-| POST   | `/skip`         | `{"ticket_id": "..."}`              | Skips a waiting or called ticket                     |
-| POST   | `/serve`        | `{"ticket_id": "..."}`              | Marks a called ticket as done                        |
+| Method | Path            | Body                               | Description                                          |
+| ------ | --------------- | ---------------------------------- | ---------------------------------------------------- |
+| GET    | `/health`       | none                               | Health check                                         |
+| POST   | `/join`         | `{"name": "...", "party_size": 1}` | Join the queue; returns the new ticket (`201`)       |
+| GET    | `/queue`        | none                               | All tickets plus a count                             |
+| GET    | `/tickets/{id}` | none                               | One ticket, its live position, and the waiting count |
+| POST   | `/call`         | none                               | Calls the next waiting ticket (earliest to join)     |
+| POST   | `/start`        | `{"ticket_id": "..."}`             | Called ticket starts being served                    |
+| POST   | `/skip`         | `{"ticket_id": "..."}`             | Skips a waiting or called ticket                     |
+| POST   | `/done`         | `{"ticket_id": "..."}`             | Finishes a ticket that is being served               |
+
+Action endpoints (`/start`, `/skip`, `/done`) return `{"success": true}` on success.
 
 ### Ticket
 
@@ -64,14 +67,18 @@ Handlers only talk to the `Store` interface, so the storage layer can change wit
 {
   "id": "12",
   "name": "Sam",
-  "position": 3,
-  "status": "waiting",
+  "position": 0,
+  "status": "done",
   "joined_at": 1790000000,
+  "called_at": 1790000300,
+  "done_at": 1790000900,
   "party_size": 2
 }
 ```
 
-`joined_at` is a Unix timestamp in seconds. `position` is 1-based for waiting tickets and `0` for every other status.
+- `joined_at`, `called_at` and `done_at` are Unix timestamps in seconds.
+- `called_at` and `done_at` are left out of the response until they are set.
+- `position` is 1-based for waiting tickets and `0` for every other status.
 
 ### Validation (`/join`)
 
@@ -83,30 +90,36 @@ Handlers only talk to the `Store` interface, so the storage layer can change wit
 
 Every error is returned as JSON: `{"error": "message"}`.
 
-| Status | Meaning                                                                    |
-| ------ | -------------------------------------------------------------------------- |
-| 400    | Invalid JSON (including bodies over 4 KB), missing `ticket_id`, or failed validation |
-| 404    | Ticket doesn't exist (including ids that aren't numbers)                   |
-| 409    | Action not allowed in the ticket's current state, or nobody to call        |
-| 500    | Unexpected server or database error                                        |
+| Status | Meaning                                                             |
+| ------ | ------------------------------------------------------------------- |
+| 400    | Invalid JSON, missing `ticket_id`, or failed validation             |
+| 404    | Ticket doesn't exist (including ids that aren't numbers)            |
+| 409    | Action not allowed in the ticket's current state, or nobody to call |
+| 413    | Request body is larger than 4 KB                                    |
+| 500    | Unexpected server or database error                                 |
 
 ## Ticket lifecycle
 
 ```
-waiting ──call──▶ called ──serve──▶ done
+waiting ──call──▶ called ──start──▶ serving ──done──▶ done
    │                 │
    └──────skip───────┴──▶ skipped
 ```
 
-Only these transitions are allowed. Anything else returns `409`.
+| Action | Allowed from      | Moves to  |
+| ------ | ----------------- | --------- |
+| call   | waiting           | called    |
+| start  | called            | serving   |
+| done   | serving           | done      |
+| skip   | waiting, called   | skipped   |
 
-The database also accepts a `serving` status (for a ticket that has been called and is now being helped), but no endpoint moves a ticket into it yet.
+Any other transition returns `409`. A ticket that is already being served can't be skipped; it can only be finished.
 
 ## How it works
 
 **Position is never stored.** A waiting ticket's position is the number of tickets in the same queue with status `waiting` and an id at or below its own, counted on every read. Because ids only increase, id order is join order.
 
-**Transitions are atomic.** Each state change is a single `UPDATE` guarded by the required current status (for example, `serve` only matches rows where `status = 'called'`). If no row matches, the code looks the ticket up to decide between `404` and `409`. That makes concurrent requests safe without any locking in Go.
+**Transitions are atomic.** `start`, `skip` and `done` all go through one helper (`transition` in `dbstore.go`). It runs a single `UPDATE` that only matches the ticket if its current status is one of the allowed starting statuses. If no row matches, it looks the ticket up to decide between `404` and `409`. That makes concurrent requests safe without any locking in Go. `call` works the same way, picking the earliest waiting ticket inside one statement.
 
 **Errors map to status codes in one place.** The store returns sentinel errors (`ErrValidation`, `ErrNotFound`, `ErrConflict`), wrapped with context, and `writeError` in `main.go` translates them with `errors.Is`.
 
@@ -116,6 +129,5 @@ The first version kept the queue in memory and used a Fenwick tree for position 
 
 ## Planned
 
-- Endpoints for the `serving` status, and a separate endpoint to finish
 - Admin endpoints: reorder, reset, stats
-- Timestamps for `called_at` and `done_at` exposed in the API
+- Wait time estimate based on `joined_at` and `called_at`
