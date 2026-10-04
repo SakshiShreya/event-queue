@@ -159,7 +159,9 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// return the ticket
-	writeJSON(w, ticket)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(ticket)
 }
 
 func queueHandler(w http.ResponseWriter, r *http.Request) {
