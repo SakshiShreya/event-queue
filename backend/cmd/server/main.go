@@ -246,6 +246,15 @@ func takeAction(w http.ResponseWriter, r *http.Request, do func(context.Context,
 func limitBody(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Reject early if the client says the body is too big.
+			if r.ContentLength > maxBytes {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				json.NewEncoder(w).Encode(map[string]string{"error": "request body too large"})
+				return
+			}
+
+			// Safety net for requests that don't declare a length.
 			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 			next.ServeHTTP(w, r)
 		})
