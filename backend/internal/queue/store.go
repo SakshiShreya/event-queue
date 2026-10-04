@@ -8,6 +8,7 @@ type Store interface {
 	GetAll(ctx context.Context) ([]Ticket, error)
 	WaitingCount(ctx context.Context) (int, error)
 	Call(ctx context.Context) (*Ticket, error)
+	Start(ctx context.Context, ticketId string) error
 	Skip(ctx context.Context, ticketId string) error
-	Serve(ctx context.Context, ticketId string) error
+	Done(ctx context.Context, ticketId string) error
 }

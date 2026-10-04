@@ -45,8 +45,9 @@ func main() {
 	r.Get("/queue", queueHandler)
 	r.Get("/tickets/{id}", ticketHandler)
 	r.Post("/call", callHandler)
+	r.Post("/start", startHandler)
 	r.Post("/skip", skipHandler)
-	r.Post("/serve", serveHandler)
+	r.Post("/done", doneHandler)
 
 	sqlDB, err := db.Open(os.Getenv("TURSO_DATABASE_URL"), os.Getenv("TURSO_AUTH_TOKEN"))
 	if err != nil {
@@ -147,7 +148,7 @@ func joinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	partySize := 1
-	if req.PartySize != nil {
+	if req.PartySize != nil && *req.PartySize != 0 {
 		partySize = *req.PartySize
 	}
 	// add to queue
@@ -202,12 +203,16 @@ func callHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, ticket)
 }
 
+func startHandler(w http.ResponseWriter, r *http.Request) {
+	takeAction(w, r, q.Start)
+}
+
 func skipHandler(w http.ResponseWriter, r *http.Request) {
 	takeAction(w, r, q.Skip)
 }
 
-func serveHandler(w http.ResponseWriter, r *http.Request) {
-	takeAction(w, r, q.Serve)
+func doneHandler(w http.ResponseWriter, r *http.Request) {
+	takeAction(w, r, q.Done)
 }
 
 func takeAction(w http.ResponseWriter, r *http.Request, do func(context.Context, string) error) {

@@ -49,10 +49,7 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MaxNameLength)
 	}
 	if partySize < 0 || partySize > MaxPartySize {
-		return nil, fmt.Errorf("%w: party_size must be between 1 and %s", ErrValidation, MaxPartySize)
-	}
-	if partySize == 0 {
-		partySize = 1
+		return nil, fmt.Errorf("%w: party_size must be between 1 and %d", ErrValidation, MaxPartySize)
 	}
 
 	now := time.Now().Unix()
@@ -239,11 +236,15 @@ func (s *DBStore) transition(ctx context.Context, ticketId string, targetStatus 
 	return fmt.Errorf("%w: can't move ticket from %s to %s", ErrConflict, ticket.Status, targetStatus)
 }
 
+func (s *DBStore) Start(ctx context.Context, ticketId string) error {
+	return s.transition(ctx, ticketId, StatusServing, StatusCalled)
+}
+
 func (s *DBStore) Skip(ctx context.Context, ticketId string) error {
 	return s.transition(ctx, ticketId, StatusSkipped, StatusWaiting, StatusCalled)
 }
 
-func (s *DBStore) Serve(ctx context.Context, ticketId string) error {
+func (s *DBStore) Done(ctx context.Context, ticketId string) error {
 	return s.transition(ctx, ticketId, StatusDone, StatusServing)
 }
 
