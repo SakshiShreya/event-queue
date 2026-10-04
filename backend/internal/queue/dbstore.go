@@ -31,6 +31,14 @@ func (s *DBStore) position(ctx context.Context, id int64) (int, error) {
 	return position, err
 }
 
+// TRANSITION RULES
+// status can only transition like this:
+// Action	Allowed from	Moves to
+// call		waiting			called
+// skip		waiting, called	skipped
+// start	called			serving
+// done		serving			done
+
 func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket, error) {
 	name = strings.TrimSpace(name)
 	// Validate
@@ -40,14 +48,11 @@ func (s *DBStore) Join(ctx context.Context, name string, partySize int) (*Ticket
 	if utf8.RuneCountInString(name) > MaxNameLength {
 		return nil, fmt.Errorf("%w: name can't be longer than %d characters", ErrValidation, MaxNameLength)
 	}
-	if partySize < 0 {
-		return nil, fmt.Errorf("%w: party_size must be > 0", ErrValidation)
+	if partySize < 0 || partySize > MaxPartySize {
+		return nil, fmt.Errorf("%w: party_size must be between 1 and %s", ErrValidation, MaxPartySize)
 	}
 	if partySize == 0 {
 		partySize = 1
-	}
-	if partySize > MaxPartySize {
-		return nil, fmt.Errorf("%w: party_size must be < %d", ErrValidation, MaxPartySize)
 	}
 
 	now := time.Now().Unix()
@@ -155,7 +160,7 @@ func (s *DBStore) GetAll(ctx context.Context) ([]Ticket, error) {
 			ID:        strconv.FormatInt(id, 10),
 			Name:      displayName,
 			Status:    status,
-			JoinedAt:  int64(joinedAt),
+			JoinedAt:  joinedAt,
 			PartySize: partySize,
 			Position:  ticketPosition,
 		}
@@ -192,14 +197,30 @@ func (s *DBStore) Call(ctx context.Context) (*Ticket, error) {
 	return s.Get(ctx, strconv.FormatInt(id, 10))
 }
 
-func (s *DBStore) Skip(ctx context.Context, ticketId string) error {
+func (s *DBStore) transition(ctx context.Context, ticketId string, targetStatus string, startingStatuses ...string) error {
+	id, err := strconv.ParseInt(ticketId, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrNotFound, ticketId)
+	}
+
+	startingStatusesPlaceholder := strings.TrimSuffix(strings.Repeat("?,", len(startingStatuses)), ",")
+	args := []any{targetStatus}
+	timestampPlaceholder := ""
+	if targetStatus == StatusDone {
+		timestampPlaceholder = ", done_at = ?"
+		args = append(args, time.Now().Unix())
+	}
+	args = append(args, id, s.queueID)
+	for _, status := range startingStatuses {
+		args = append(args, status)
+	}
 	result, err := s.db.ExecContext(
 		ctx,
-		"UPDATE Ticket SET status = 'skipped' WHERE id = (SELECT id FROM Ticket WHERE queue_id = ? AND status IN ('waiting','called') AND id = ?)",
-		s.queueID, ticketId,
+		"UPDATE Ticket SET status = ?"+timestampPlaceholder+" WHERE id = ? AND queue_id = ? AND status IN ("+startingStatusesPlaceholder+")",
+		args...,
 	)
 	if err != nil {
-		return fmt.Errorf("skip ticket: %w", err)
+		return fmt.Errorf("transition ticket: %w", err)
 	}
 
 	count, err := result.RowsAffected()
@@ -215,33 +236,15 @@ func (s *DBStore) Skip(ctx context.Context, ticketId string) error {
 		return err
 	}
 
-	return fmt.Errorf("%w: can only skip waiting or called tickets, got %q", ErrConflict, ticket.Status)
+	return fmt.Errorf("%w: can't move ticket from %s to %s", ErrConflict, ticket.Status, targetStatus)
+}
+
+func (s *DBStore) Skip(ctx context.Context, ticketId string) error {
+	return s.transition(ctx, ticketId, StatusSkipped, StatusWaiting, StatusCalled)
 }
 
 func (s *DBStore) Serve(ctx context.Context, ticketId string) error {
-	result, err := s.db.ExecContext(
-		ctx,
-		"UPDATE Ticket SET status = 'done', done_at = ? WHERE id = (SELECT id FROM Ticket WHERE queue_id = ? AND status = 'called' AND id = ?)",
-		time.Now().Unix(), s.queueID, ticketId,
-	)
-	if err != nil {
-		return fmt.Errorf("serve ticket: %w", err)
-	}
-
-	count, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if count == 1 {
-		return nil
-	}
-
-	ticket, err := s.Get(ctx, ticketId)
-	if err != nil {
-		return err
-	}
-
-	return fmt.Errorf("%w: only called tickets can be served, got %q", ErrConflict, ticket.Status)
+	return s.transition(ctx, ticketId, StatusDone, StatusServing)
 }
 
 var _ Store = (*DBStore)(nil)
