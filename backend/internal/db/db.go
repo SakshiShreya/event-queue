@@ -42,10 +42,11 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	now := time.Now().Unix()
 	_, err := db.ExecContext(
 		ctx,
 		"INSERT OR IGNORE INTO Rooms (id, name, created_at, updated_at) VALUES ('demo', 'Demo', ?, ?)",
-		time.Now().Unix(), time.Now().Unix(),
+		now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)

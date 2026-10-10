@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"queue-app/internal/db"
-	"queue-app/internal/queue"
+	"queue-app/internal/store"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -100,11 +100,11 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 
 	switch {
-	case errors.Is(err, queue.ErrValidation):
+	case errors.Is(err, store.ErrValidation):
 		status = http.StatusBadRequest
-	case errors.Is(err, queue.ErrNotFound):
+	case errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
-	case errors.Is(err, queue.ErrConflict):
+	case errors.Is(err, store.ErrRoomClosed):
 		status = http.StatusConflict
 	default:
 		var br badRequest
