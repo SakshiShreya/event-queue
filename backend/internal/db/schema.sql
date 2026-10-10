@@ -1,18 +1,10 @@
-CREATE TABLE IF NOT EXISTS Queue (
+CREATE TABLE IF NOT EXISTS Rooms (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    status TEXT NOT NULL DEFAULT 'open',
+    admit_rate_per_min INTEGER NOT NULL DEFAULT 50,
+    next_number INTEGER NOT NULL DEFAULT 0,
+    admitted_up_to INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS Ticket (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    queue_id TEXT NOT NULL REFERENCES Queue(id),
-    display_name TEXT NOT NULL,
-    party_size INTEGER NOT NULL DEFAULT 1,
-    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'called', 'serving', 'done', 'skipped')),
-    joined_at INTEGER NOT NULL,
-    called_at INTEGER,
-    done_at INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_ticket_queueid_status_id ON Ticket (queue_id, status, id);

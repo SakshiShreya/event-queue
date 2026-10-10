@@ -44,8 +44,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 
 	_, err := db.ExecContext(
 		ctx,
-		"INSERT OR IGNORE INTO Queue (id, name, created_at) VALUES ('default', 'Default', ?)",
-		time.Now().Unix(),
+		"INSERT OR IGNORE INTO Rooms (id, name, created_at, updated_at) VALUES ('demo', 'Demo', ?, ?)",
+		time.Now().Unix(), time.Now().Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
