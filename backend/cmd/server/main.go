@@ -18,8 +18,6 @@ import (
 	"github.com/rs/cors"
 )
 
-var q queue.Store
-
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("no .env file loaded: %v", err)
@@ -41,14 +39,6 @@ func main() {
 	// endpoints
 	r.Get("/health", healthHandler)
 
-	r.Post("/join", joinHandler)
-	r.Get("/queue", queueHandler)
-	r.Get("/tickets/{id}", ticketHandler)
-	r.Post("/call", callHandler)
-	r.Post("/start", startHandler)
-	r.Post("/skip", skipHandler)
-	r.Post("/done", doneHandler)
-
 	sqlDB, err := db.Open(os.Getenv("TURSO_DATABASE_URL"), os.Getenv("TURSO_AUTH_TOKEN"))
 	if err != nil {
 		log.Fatalf("failed to connect to turso: %v", err)
@@ -62,8 +52,6 @@ func main() {
 		log.Fatalf("migrate failed: %v", err)
 	}
 	log.Println("migrated")
-
-	q = queue.NewDBStore(sqlDB, "default")
 
 	// start server
 	port := ":8080"
@@ -132,109 +120,6 @@ func writeError(w http.ResponseWriter, err error) {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-func joinHandler(w http.ResponseWriter, r *http.Request) {
-	// parse json from request body
-	var req struct {
-		Name      string `json:"name"`
-		PartySize int    `json:"party_size"`
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		writeError(w, badRequest{"Invalid JSON"})
-		return
-	}
-
-	// add to queue
-	ticket, err := q.Join(r.Context(), req.Name, req.PartySize)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	// return the ticket
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(ticket)
-}
-
-func queueHandler(w http.ResponseWriter, r *http.Request) {
-	tickets, err := q.GetAll(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, map[string]interface{}{
-		"tickets": tickets,
-		"count":   len(tickets),
-	})
-}
-
-func ticketHandler(w http.ResponseWriter, r *http.Request) {
-	ticket, err := q.Get(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	waitingCount, err := q.WaitingCount(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	writeJSON(w, map[string]any{
-		"ticket":        ticket,
-		"position":      ticket.Position,
-		"waiting_count": waitingCount,
-	})
-}
-
-func callHandler(w http.ResponseWriter, r *http.Request) {
-	ticket, err := q.Call(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, ticket)
-}
-
-func startHandler(w http.ResponseWriter, r *http.Request) {
-	takeAction(w, r, q.Start)
-}
-
-func skipHandler(w http.ResponseWriter, r *http.Request) {
-	takeAction(w, r, q.Skip)
-}
-
-func doneHandler(w http.ResponseWriter, r *http.Request) {
-	takeAction(w, r, q.Done)
-}
-
-func takeAction(w http.ResponseWriter, r *http.Request, do func(context.Context, string) error) {
-	var req struct {
-		TicketID string `json:"ticket_id"`
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		writeError(w, badRequest{"Invalid JSON"})
-		return
-	}
-	if req.TicketID == "" {
-		writeError(w, badRequest{"ticket_id is required"})
-		return
-	}
-
-	err = do(r.Context(), req.TicketID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	writeJSON(w, map[string]bool{"success": true})
 }
 
 // limitBody caps how many bytes a handler can read from the request body.
