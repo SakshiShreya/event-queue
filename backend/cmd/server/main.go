@@ -10,6 +10,8 @@ import (
 	"os"
 	"queue-app/internal/db"
 	"queue-app/internal/store"
+	"queue-app/internal/store/turso"
+	"queue-app/internal/token"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -32,7 +34,7 @@ func main() {
 			"http://localhost:5173",
 		},
 		AllowedMethods: []string{http.MethodGet, http.MethodPost},
-		AllowedHeaders: []string{"Content-Type"},
+		AllowedHeaders: []string{"Content-Type", "X-Queue-Token"},
 	}).Handler)
 	r.Use(limitBody(4 << 10)) // 4 KB
 
@@ -52,6 +54,13 @@ func main() {
 		log.Fatalf("migrate failed: %v", err)
 	}
 	log.Println("migrated")
+
+	signer, err := token.NewSigner(os.Getenv("QUEUE_SECRET"))
+	if err != nil {
+		log.Fatalf("invalid QUEUE_SECRET: %v", err)
+	}
+	srv := &server{counters: turso.New(sqlDB), signer: signer}
+	r.Post("/rooms/{id}/enter", srv.enter)
 
 	// start server
 	port := ":8080"
