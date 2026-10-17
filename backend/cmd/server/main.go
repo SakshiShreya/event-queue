@@ -71,6 +71,7 @@ func main() {
 	srv := &server{counters: counters, cache: cache, signer: signer}
 
 	r.Post("/rooms/{id}/enter", srv.enter)
+	r.Get("/rooms/{id}/status", srv.status)
 
 	// start server
 	port := ":8080"

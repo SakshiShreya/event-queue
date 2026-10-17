@@ -68,6 +68,7 @@ func (c *Cache) refresh(ctx context.Context) {
 		roomState, err := c.counters.Snapshot(ctx, roomID)
 		if err != nil {
 			log.Println(err)
+			continue
 		}
 
 		c.mu.Lock()
