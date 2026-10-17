@@ -124,7 +124,12 @@ func writeError(w http.ResponseWriter, err error) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	res := map[string]string{"error": err.Error()}
+	if status == http.StatusInternalServerError {
+		log.Printf("internal error: %v", err)
+		res = map[string]string{"error": "internal error"}
+	}
+	json.NewEncoder(w).Encode(res)
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {

@@ -30,7 +30,7 @@ type Signer struct {
 
 func NewSigner(secret string) (*Signer, error) {
 	if len(secret) < MinSecretLength {
-		return nil, fmt.Errorf("secret must be atleast %d characters long", MinSecretLength)
+		return nil, fmt.Errorf("secret must be at least %d characters long", MinSecretLength)
 	}
 
 	return &Signer{secret: []byte(secret)}, nil

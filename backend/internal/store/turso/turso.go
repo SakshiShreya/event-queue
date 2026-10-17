@@ -55,7 +55,24 @@ func (s *Store) NextNumber(ctx context.Context, roomID string) (int64, error) {
 }
 
 func (s *Store) Snapshot(ctx context.Context, roomID string) (store.RoomState, error) {
-	roomState := store.RoomState{}
+	var status store.Status
+	var admitRatePerMin, nextNumber, admittedUpTo int64
+	err := s.db.QueryRowContext(ctx,
+		"SELECT status, admit_rate_per_min, next_number, admitted_up_to FROM Rooms WHERE id = ?",
+		roomID).Scan(&status, &admitRatePerMin, &nextNumber, &admittedUpTo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.RoomState{}, store.ErrNotFound
+	}
+	if err != nil {
+		return store.RoomState{}, fmt.Errorf("lookup room %q: %w", roomID, err)
+	}
+
+	roomState := store.RoomState{
+		Status:          status,
+		AdmitRatePerMin: admitRatePerMin,
+		NextNumber:      nextNumber,
+		AdmittedUpTo:    admittedUpTo,
+	}
 	return roomState, nil
 }
 
