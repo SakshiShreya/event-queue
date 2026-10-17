@@ -99,15 +99,15 @@ func (s *Store) Snapshot(ctx context.Context, roomID string) (store.RoomState, e
 
 func (s *Store) LoadRoom(ctx context.Context, roomID string) (store.Room, error) {
 	room := store.Room{}
-	return room, nil
+	return room, fmt.Errorf("not implemented")
 }
 
 func (s *Store) SaveRoom(ctx context.Context, room store.Room) error {
-	return nil
+	return fmt.Errorf("not implemented")
 }
 
 func (s *Store) SaveCounters(ctx context.Context, roomID string, nextNumber int64, admittedUpTo int64) error {
-	return nil
+	return fmt.Errorf("not implemented")
 }
 
 var _ store.CounterStore = (*Store)(nil)
