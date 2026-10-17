@@ -22,7 +22,28 @@ func (s *Store) AcquireAdmitterLock(ctx context.Context, roomID string, ttl time
 }
 
 func (s *Store) Admit(ctx context.Context, roomID string, n int64) (int64, error) {
-	return 0, nil
+	if n < 0 {
+		return 0, fmt.Errorf("admit n must not be negative: %w", store.ErrValidation)
+	}
+
+	var admittedUpTo int64
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE Rooms SET admitted_up_to = MIN(admitted_up_to + ?, next_number)
+		 WHERE id = ? AND status = 'open'
+		 RETURNING admitted_up_to`, n, roomID).Scan(&admittedUpTo)
+	if err == nil {
+		return admittedUpTo, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("admit for room %q: %w", roomID, err)
+	}
+
+	// Nothing was updated: the room is missing, paused or closed. Find out which.
+	roomState, err := s.Snapshot(ctx, roomID)
+	if err != nil {
+		return 0, err
+	}
+	return roomState.AdmittedUpTo, nil
 }
 
 func (s *Store) NextNumber(ctx context.Context, roomID string) (int64, error) {
