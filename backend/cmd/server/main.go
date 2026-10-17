@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"queue-app/internal/db"
+	"queue-app/internal/roomcache"
 	"queue-app/internal/store"
 	"queue-app/internal/store/turso"
 	"queue-app/internal/token"
@@ -59,7 +60,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid QUEUE_SECRET: %v", err)
 	}
-	srv := &server{counters: turso.New(sqlDB), signer: signer}
+
+	counters := turso.New(sqlDB)
+	cache := roomcache.New(counters)
+
+	cacheCtx, stopCache := context.WithCancel(context.Background())
+	defer stopCache()
+	go cache.Run(cacheCtx, time.Second)
+
+	srv := &server{counters: counters, cache: cache, signer: signer}
+
 	r.Post("/rooms/{id}/enter", srv.enter)
 
 	// start server
@@ -115,6 +125,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, store.ErrRoomClosed):
 		status = http.StatusConflict
+	case errors.Is(err, store.ErrUnauthorized):
+		status = http.StatusUnauthorized
 	default:
 		var br badRequest
 		if errors.As(err, &br) {

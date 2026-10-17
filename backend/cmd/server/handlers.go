@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"queue-app/internal/roomcache"
 	"queue-app/internal/store"
 	"queue-app/internal/token"
 	"time"
@@ -13,6 +14,7 @@ const retryAfterSeconds = 5
 
 type server struct {
 	counters store.CounterStore
+	cache    *roomcache.Cache
 	signer   *token.Signer
 }
 
