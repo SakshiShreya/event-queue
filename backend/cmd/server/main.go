@@ -8,11 +8,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"queue-app/internal/admitter"
 	"queue-app/internal/db"
 	"queue-app/internal/roomcache"
 	"queue-app/internal/store"
 	"queue-app/internal/store/turso"
 	"queue-app/internal/token"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -62,11 +66,20 @@ func main() {
 	}
 
 	counters := turso.New(sqlDB)
-	cache := roomcache.New(counters)
+	bgCtx, stopBg := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopBg()
 
-	cacheCtx, stopCache := context.WithCancel(context.Background())
-	defer stopCache()
-	go cache.Run(cacheCtx, time.Second)
+	var wg sync.WaitGroup
+
+	cache := roomcache.New(counters)
+	admit := admitter.New(counters, "demo")
+
+	wg.Go(func() {
+		cache.Run(bgCtx, time.Second)
+	})
+	wg.Go(func() {
+		admit.Run(bgCtx, time.Second)
+	})
 
 	srv := &server{counters: counters, cache: cache, signer: signer}
 
@@ -76,7 +89,29 @@ func main() {
 	// start server
 	port := ":8080"
 	fmt.Printf("Server starting on port %s\n", port)
-	log.Fatal(http.ListenAndServe(port, r))
+
+	s := &http.Server{
+		Addr:    port,
+		Handler: r,
+	}
+	go func() {
+		err := s.ListenAndServe()
+
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	<-bgCtx.Done()
+
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+	err = s.Shutdown(ctx1)
+	if err != nil {
+		log.Printf("HTTP server Shutdown: %v", err)
+	}
+	wg.Wait()
+	log.Printf("Stopped")
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code that
