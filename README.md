@@ -1,15 +1,16 @@
-# Event Queueing
+# Event Queueing — Virtual Waiting Room
 
-Event/waitlist queue system: people join a line, admin calls them in order.
+A virtual waiting room that protects a site from traffic spikes. Visitors get a signed ticket number, poll for their position, and are admitted at a configurable rate.
 
-**Stack:** React (frontend) · Go (backend) · Turso SQLite (database) · Polling (no WebSockets)
+**Stack:** Go (API) · Turso (durable config and snapshots) · Redis (hot counters, planned) · React + Vite (waiting page, planned) · polling, no WebSockets
 
-## Quick Start
+## Quick start
 
 ### Backend Setup
 
 ```bash
 cd backend
+# create backend/.env first (see backend/README.md)
 go run ./cmd/server
 ```
 
@@ -20,33 +21,19 @@ Server: `http://localhost:8080`
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev     # http://localhost:5173
 ```
 
-App: `http://localhost:5173`
+## How it works (short version)
 
-## Tech Stack
+- `enter` atomically increments a counter and returns an HMAC-signed token containing the visitor's number. There is no per-visitor row.
+- `status` verifies the token locally and computes `ahead = number - admitted_up_to` from a cache that refreshes every second.
+- A background admitter advances `admitted_up_to` at the room's rate.
 
-**Backend:**
+## Layout
 
-- Go 1.21+
-- `net/http` standard library
-- Turso (cloud SQLite)
-- `libsql-client-go` for database
-
-**Frontend:**
-
-- React 18+
-- Vite (bundler)
-- Polling (3–5s intervals)
-- No WebSockets (simplicity first)
-
-## License
-
-MIT — see LICENSE file.
-
-## Getting Help
-
-- Go syntax: [Tour of Go](https://tour.golang.org) + [Go by Example](https://gobyexample.com)
-- React: [React docs](https://react.dev)
-- Turso: [Turso docs](https://docs.turso.tech)
+```
+backend/     Go API
+frontend/    React waiting page (not started)
+references/  Learning leftovers (Fenwick tree)
+```
