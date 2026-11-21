@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"queue-app/internal/store"
+	"slices"
 	"time"
 )
 
@@ -95,6 +96,42 @@ func (s *Store) Snapshot(ctx context.Context, roomID string) (store.RoomState, e
 		AdmittedUpTo:    admittedUpTo,
 	}
 	return roomState, nil
+}
+
+func (s *Store) SetRate(ctx context.Context, roomID string, admitRatePerMin int64) error {
+	if admitRatePerMin < 0 {
+		return fmt.Errorf("admit_rate_per_min must not be negative: %w", store.ErrValidation)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE Rooms SET admit_rate_per_min = ? WHERE id = ?`, admitRatePerMin, roomID)
+	if err != nil {
+		return fmt.Errorf("set rate for room %q: %w", roomID, err)
+	}
+	return requireRow(res)
+}
+
+func (s *Store) SetStatus(ctx context.Context, roomID string, status store.Status) error {
+	if !slices.Contains([]store.Status{store.StatusOpen, store.StatusPaused, store.StatusClosed}, status) {
+		return fmt.Errorf("unknown status %q: %w", status, store.ErrValidation)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE Rooms SET status = ? WHERE id = ?`, status, roomID)
+	if err != nil {
+		return fmt.Errorf("set status for room %q: %w", roomID, err)
+	}
+	return requireRow(res)
+}
+
+// requireRow maps "UPDATE matched nothing" to ErrNotFound.
+func requireRow(res sql.Result) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) LoadRoom(ctx context.Context, roomID string) (store.Room, error) {
