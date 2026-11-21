@@ -1,133 +1,125 @@
-# Backend — Go HTTP API
+# Backend — Virtual Waiting Room API
 
-Waitlist queue API. People join a line, an admin calls them in order, and every ticket's position is computed live from the database.
+A virtual waiting room (Queue-it / Cloudflare Waiting Room style). Visitors enter, get a signed token with a sequence number, poll `status`, and are admitted at a controlled rate. There is no per-visitor database row: a visitor's position is just `number - admitted_up_to`.
 
-**Stack:** Go · [chi](https://github.com/go-chi/chi) router · Turso (cloud SQLite) via `libsql-client-go` · CORS via `rs/cors`
+**Stack:** Go · [chi](https://github.com/go-chi/chi) · Turso (cloud SQLite, via `libsql-client-go`) · `rs/cors` · polling (no WebSockets). Redis is planned for the hot counters (see Roadmap).
+
+## Status
+
+| Area                                   | State                                                        |
+| -------------------------------------- | ------------------------------------------------------------ |
+| `POST /rooms/{id}/enter`               | Done                                                         |
+| `GET /rooms/{id}/status` + local cache | Done                                                         |
+| Admitter goroutine                     | Done (hard-coded to room `demo`)                             |
+| HMAC queue tokens                      | Done, with tests                                             |
+| `SetRate`, `SetStatus` (Turso store)   | Done                                                         |
+| `Reset`, admin HTTP endpoints          | Next                                                         |
+| Redis `CounterStore`, leader lock      | Planned                                                      |
+| Pass tokens, `/verify`, React page     | Planned                                                      |
+| `LoadRoom`, `SaveRoom`, `SaveCounters` | Stubs returning "not implemented" until the Redis flush work |
+| Turso store tests                      | Skipped by choice (optional, Phase H)                        |
 
 ## Setup
 
-1. Create a Turso database and grab its URL and an auth token (see [Turso docs](https://docs.turso.tech)).
-2. Create `backend/.env` (it is gitignored, never commit it):
+1. Create a Turso database and get its URL and auth token ([Turso docs](https://docs.turso.tech)).
+2. Create `backend/.env` (gitignored, never commit it):
 
 ```
-   TURSO_DATABASE_URL=libsql://<your-db>.turso.io
-   TURSO_AUTH_TOKEN=<your-token>
+TURSO_DATABASE_URL=libsql://<your-db>.turso.io
+TURSO_AUTH_TOKEN=<your-token>
+QUEUE_SECRET=<random string, 32+ characters>
 ```
 
-3. Run the server from the `backend` directory:
+3. Run from the `backend` directory:
 
 ```bash
-   go run ./cmd/server
+go run ./cmd/server
 ```
 
-The server listens on `http://localhost:8080`. On startup it connects to Turso and creates any missing tables. CORS allows requests from `http://localhost:5173` (the Vite dev server).
-
-Quick check:
+The server listens on `http://localhost:8080`. On startup it connects to Turso, runs the idempotent migration (which seeds a `demo` room) and starts the cache refresher and the admitter. CORS allows `http://localhost:5173` (the Vite dev server). `Ctrl-C` shuts down gracefully.
 
 ```bash
-curl http://localhost:8080/health
+curl localhost:8080/health
+go test ./...
+```
+
+## Try it
+
+```bash
+# join the room; note the token and number
+curl -s -X POST localhost:8080/rooms/demo/enter
+
+# poll status with your token
+curl -s -H "X-Queue-Token: <token>" localhost:8080/rooms/demo/status
+```
+
+Until the admin endpoints exist, change the rate or status in the Turso shell:
+
+```sql
+UPDATE Rooms SET admit_rate_per_min = 300, status = 'open' WHERE id = 'demo';
+SELECT next_number, admitted_up_to FROM Rooms WHERE id = 'demo';
 ```
 
 ## Project layout
 
 ```
 backend/
-├── cmd/server/main.go        # router, middleware, HTTP handlers
+├── cmd/server/
+│   ├── main.go            # wiring, router, middleware, graceful shutdown
+│   └── handlers.go        # enter and status handlers
 └── internal/
-    ├── db/
-    │   ├── db.go             # opens the connection, runs migrations
-    │   └── schema.sql        # table definitions (embedded into the binary)
-    └── queue/
-        ├── ticket.go         # Ticket type, status constants, limits, sentinel errors
-        ├── store.go          # Store interface the handlers depend on
-        ├── dbstore.go        # Turso-backed implementation of Store
-        └── fenwick.go        # Fenwick tree (learning exercise, not used by the server)
+    ├── admitter/          # ticker loop that advances admitted_up_to by rate
+    ├── roomcache/         # per-room RoomState cache, refreshed every second
+    ├── db/                # opens Turso, runs migrations (schema.sql embedded)
+    ├── store/             # CounterStore / RoomRepo interfaces, types, sentinel errors
+    │   └── turso/         # Turso implementation
+    └── token/             # HMAC-SHA256 sign/verify (+ tests)
 ```
 
-Handlers only talk to the `Store` interface, so the storage layer can change without touching `main.go`.
+Handlers depend on the `store.CounterStore` interface, so the Turso store can be swapped for a Redis store without touching them.
 
 ## Endpoints
 
-| Method | Path            | Body                               | Description                                          |
-| ------ | --------------- | ---------------------------------- | ---------------------------------------------------- |
-| GET    | `/health`       | none                               | Health check                                         |
-| POST   | `/join`         | `{"name": "...", "party_size": 1}` | Join the queue; returns the new ticket (`201`)       |
-| GET    | `/queue`        | none                               | All tickets plus a count                             |
-| GET    | `/tickets/{id}` | none                               | One ticket, its live position, and the waiting count |
-| POST   | `/call`         | none                               | Calls the next waiting ticket (earliest to join)     |
-| POST   | `/start`        | `{"ticket_id": "..."}`             | Called ticket starts being served                    |
-| POST   | `/skip`         | `{"ticket_id": "..."}`             | Skips a waiting or called ticket                     |
-| POST   | `/done`         | `{"ticket_id": "..."}`             | Finishes a ticket that is being served               |
+| Method | Path                 | Description                                                                      |
+| ------ | -------------------- | -------------------------------------------------------------------------------- |
+| GET    | `/health`            | Health check                                                                     |
+| POST   | `/rooms/{id}/enter`  | Join the room. Returns `{token, number, retryAfter}`                             |
+| GET    | `/rooms/{id}/status` | Requires `X-Queue-Token`. Returns `{state, ahead, retryAfter, estimatedWaitSec}` |
 
-Action endpoints (`/start`, `/skip`, `/done`) return `{"success": true}` on success.
+**enter:** if the request carries a valid token for this room, the same token and number come back (no double-join). A missing, invalid or other-room token is treated as a new visitor. Closed rooms return 409 and unknown rooms 404.
 
-### Ticket
-
-```json
-{
-  "id": "12",
-  "name": "Sam",
-  "position": 0,
-  "status": "done",
-  "joined_at": 1790000000,
-  "called_at": 1790000300,
-  "done_at": 1790000900,
-  "party_size": 2
-}
-```
-
-- `joined_at`, `called_at` and `done_at` are Unix timestamps in seconds.
-- `called_at` and `done_at` are left out of the response until they are set.
-- `position` is 1-based for waiting tickets and `0` for every other status.
-
-### Validation (`/join`)
-
-- `name` is trimmed of surrounding whitespace, must not be empty, and is limited to 50 characters.
-- `party_size` is optional. If it is missing or `0` it defaults to `1`. Otherwise it must be between 1 and 20.
-- Request bodies are limited to 4 KB.
+**status:** `state` is `waiting`, `admitted`, `paused` or `closed`. `ahead = max(0, number - admitted_up_to)`. `retryAfter` is 5–7 seconds (base plus jitter). `estimatedWaitSec` is `ahead * 60 / rate`, or `-1` when the rate is 0. A missing or invalid token, or one for another room, returns 401.
 
 ### Errors
 
-Every error is returned as JSON: `{"error": "message"}`.
+Every error is JSON: `{"error": "message"}`.
 
-| Status | Meaning                                                             |
-| ------ | ------------------------------------------------------------------- |
-| 400    | Invalid JSON, missing `ticket_id`, or failed validation             |
-| 404    | Ticket doesn't exist (including ids that aren't numbers)            |
-| 409    | Action not allowed in the ticket's current state, or nobody to call |
-| 413    | Request body is larger than 4 KB                                    |
-| 500    | Unexpected server or database error                                 |
-
-## Ticket lifecycle
-
-```
-waiting ──call──▶ called ──start──▶ serving ──done──▶ done
-   │                 │
-   └──────skip───────┴──▶ skipped
-```
-
-| Action | Allowed from      | Moves to  |
-| ------ | ----------------- | --------- |
-| call   | waiting           | called    |
-| start  | called            | serving   |
-| done   | serving           | done      |
-| skip   | waiting, called   | skipped   |
-
-Any other transition returns `409`. A ticket that is already being served can't be skipped; it can only be finished.
+| Status | Meaning                                                                                   |
+| ------ | ----------------------------------------------------------------------------------------- |
+| 400    | Validation or bad request                                                                 |
+| 401    | Missing, invalid or wrong-room token                                                      |
+| 404    | Room not found                                                                            |
+| 409    | Room closed                                                                               |
+| 413    | Request body over 4 KB                                                                    |
+| 500    | Unexpected error. The real error is logged and the client gets a generic `internal error` |
 
 ## How it works
 
-**Position is never stored.** A waiting ticket's position is the number of tickets in the same queue with status `waiting` and an id at or below its own, counted on every read. Because ids only increase, id order is join order.
+**Tokens.** `enter` increments `next_number` atomically and returns an HMAC-SHA256 signed token `{room_id, number, issued_at}`. `status` verifies it locally with no database call. All instances must share `QUEUE_SECRET`.
 
-**Transitions are atomic.** `start`, `skip` and `done` all go through one helper (`transition` in `dbstore.go`). It runs a single `UPDATE` that only matches the ticket if its current status is one of the allowed starting statuses. If no row matches, it looks the ticket up to decide between `404` and `409`. That makes concurrent requests safe without any locking in Go. `call` works the same way, picking the earliest waiting ticket inside one statement.
+**Atomic counters.** `NextNumber` and `Admit` are each a single `UPDATE ... RETURNING` statement. `Admit` is capped with `MIN(admitted_up_to + n, next_number)` and only applies to open rooms.
 
-**Errors map to status codes in one place.** The store returns sentinel errors (`ErrValidation`, `ErrNotFound`, `ErrConflict`), wrapped with context, and `writeError` in `main.go` translates them with `errors.Is`.
+**Status never queries the DB per poll.** `roomcache` holds the latest `RoomState` per room behind a `sync.RWMutex`. It fills on first request and a ticker goroutine refreshes it every second. Known gap: an unknown room id hits Turso on every request (add a short negative cache later).
 
-## History
+**Admitter.** Every second it reads a snapshot, skips paused or closed rooms and a rate of 0, accumulates fractional "people credit" from the elapsed time, and admits `floor(credit)` capped at the number waiting. If `Admit` fails, the credit is kept and retried next tick. It stops on context cancellation.
 
-The first version kept the queue in memory and used a Fenwick tree for position tracking. That in-memory queue was removed once Turso persistence was in place. The tree itself is kept in `internal/queue/fenwick.go` as a learning exercise, and the full in-memory version is available under the git tag `week7-inmemory`.
+**Errors map to status codes in one place** (`writeError`), via sentinel errors and `errors.Is`.
 
-## Planned
+## Roadmap
 
-- Admin endpoints: reorder, reset, stats
-- Wait time estimate based on `joined_at` and `called_at`
+1. Admin API: `Reset`, then endpoints for rate, pause/resume, admit N and reset. Decide the reset-token behaviour (token epoch vs. invalidate on reset).
+2. Redis `CounterStore` (`INCR`, atomic capped `Admit` via Lua), hydrate from Turso on boot, periodic flush to Turso, `COUNTER_STORE=turso|redis` flag.
+3. Admitter leader lock (`SET NX PX` with renewal) and a two-instance drill.
+4. Pass tokens, `POST /verify`, then the React waiting page in `frontend/`.
+5. Optional: Turso store tests (50-goroutine `NextNumber` test), load test comparing Turso vs. Redis.
+   The full plan lives in the project doc `queue-app-plan.md`.
