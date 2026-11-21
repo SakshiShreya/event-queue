@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid QUEUE_SECRET: %v", err)
 	}
+	adminKey := os.Getenv("ADMIN_KEY")
+	if len(adminKey) < 32 {
+		log.Fatalf("invalid ADMIN_KEY: key must be atleast 32 characters long")
+	}
 
 	counters := turso.New(sqlDB)
 	bgCtx, stopBg := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -88,9 +93,9 @@ func main() {
 	r.Get("/rooms/{id}/status", srv.status)
 
 	// admin routes
-	adminRoutes := r.Group(func(r chi.Router) {
-	})
-	adminRoutes.Route("/admin", func(r chi.Router) {
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(authMiddleware(adminKey))
+
 		r.Get("/rooms/{id}", srv.snapshot)
 		r.Post("/rooms/{id}/rate", srv.rate)
 		r.Post("/rooms/{id}/pause", srv.pause)
@@ -212,6 +217,20 @@ func limitBody(maxBytes int64) func(http.Handler) http.Handler {
 
 			// Safety net for requests that don't declare a length.
 			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func authMiddleware(adminKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqKey := r.Header.Get("X-Admin-Key")
+			if isEqual := subtle.ConstantTimeCompare([]byte(adminKey), []byte(reqKey)); isEqual == 0 {
+				writeError(w, store.ErrUnauthorized)
+				return
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	}
