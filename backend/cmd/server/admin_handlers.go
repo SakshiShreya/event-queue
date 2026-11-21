@@ -49,6 +49,11 @@ func (s *server) rate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.PerMin <= 0 {
+		writeError(w, badRequest{"perMin must be greater than 0"})
+		return
+	}
+
 	if err := s.counters.SetRate(r.Context(), roomID, req.PerMin); err != nil {
 		writeError(w, err)
 		return
@@ -66,8 +71,26 @@ func (s *server) admit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := s.counters.Admit(r.Context(), roomID, req.N)
+	if req.N <= 0 {
+		writeError(w, badRequest{"n must be greater than 0"})
+		return
+	}
+
+	roomState, err := s.counters.Snapshot(r.Context(), roomID)
 	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if roomState.Status == store.StatusClosed {
+		writeError(w, store.ErrRoomClosed)
+		return
+	}
+	if roomState.Status != store.StatusOpen {
+		writeError(w, store.ErrRoomNotOpen)
+		return
+	}
+
+	if _, err := s.counters.Admit(r.Context(), roomID, req.N); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -100,8 +123,14 @@ func (s *server) pause(w http.ResponseWriter, r *http.Request) {
 	s.setStatus(r.Context(), w, roomID, store.StatusPaused)
 }
 
-func (s *server) resume(w http.ResponseWriter, r *http.Request) {
+func (s *server) open(w http.ResponseWriter, r *http.Request) {
 	roomID := chi.URLParam(r, "id")
 
 	s.setStatus(r.Context(), w, roomID, store.StatusOpen)
+}
+
+func (s *server) close(w http.ResponseWriter, r *http.Request) {
+	roomID := chi.URLParam(r, "id")
+
+	s.setStatus(r.Context(), w, roomID, store.StatusClosed)
 }

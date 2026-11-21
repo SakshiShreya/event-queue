@@ -94,7 +94,8 @@ func main() {
 		r.Get("/rooms/{id}", srv.snapshot)
 		r.Post("/rooms/{id}/rate", srv.rate)
 		r.Post("/rooms/{id}/pause", srv.pause)
-		r.Post("/rooms/{id}/resume", srv.resume)
+		r.Post("/rooms/{id}/open", srv.open)
+		r.Post("/rooms/{id}/close", srv.close)
 		r.Post("/rooms/{id}/admit", srv.admit)
 	})
 
@@ -171,7 +172,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
-	case errors.Is(err, store.ErrRoomClosed):
+	case errors.Is(err, store.ErrRoomClosed), errors.Is(err, store.ErrRoomNotOpen):
 		status = http.StatusConflict
 	case errors.Is(err, store.ErrUnauthorized):
 		status = http.StatusUnauthorized
