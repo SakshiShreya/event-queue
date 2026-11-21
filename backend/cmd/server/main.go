@@ -83,8 +83,20 @@ func main() {
 
 	srv := &server{counters: counters, cache: cache, signer: signer}
 
+	// public routes
 	r.Post("/rooms/{id}/enter", srv.enter)
 	r.Get("/rooms/{id}/status", srv.status)
+
+	// admin routes
+	adminRoutes := r.Group(func(r chi.Router) {
+	})
+	adminRoutes.Route("/admin", func(r chi.Router) {
+		r.Get("/rooms/{id}", srv.snapshot)
+		r.Post("/rooms/{id}/rate", srv.rate)
+		r.Post("/rooms/{id}/pause", srv.pause)
+		r.Post("/rooms/{id}/resume", srv.resume)
+		r.Post("/rooms/{id}/admit", srv.admit)
+	})
 
 	// start server
 	port := ":8080"
