@@ -6,18 +6,19 @@ A virtual waiting room (Queue-it / Cloudflare Waiting Room style). Visitors ente
 
 ## Status
 
-| Area                                   | State                                                        |
-| -------------------------------------- | ------------------------------------------------------------ |
-| `POST /rooms/{id}/enter`               | Done                                                         |
-| `GET /rooms/{id}/status` + local cache | Done                                                         |
-| Admitter goroutine                     | Done (hard-coded to room `demo`)                             |
-| HMAC queue tokens                      | Done, with tests                                             |
-| `SetRate`, `SetStatus` (Turso store)   | Done                                                         |
-| `Reset`, admin HTTP endpoints          | Next                                                         |
-| Redis `CounterStore`, leader lock      | Planned                                                      |
-| Pass tokens, `/verify`, React page     | Planned                                                      |
-| `LoadRoom`, `SaveRoom`, `SaveCounters` | Stubs returning "not implemented" until the Redis flush work |
-| Turso store tests                      | Skipped by choice (optional, Phase H)                        |
+| Area                                                          | State                                 |
+| ------------------------------------------------------------- | ------------------------------------- |
+| `POST /rooms/{id}/enter`                                      | Done                                  |
+| `GET /rooms/{id}/status` + local cache                        | Done                                  |
+| Admitter goroutine                                            | Done (hard-coded to room `demo`)      |
+| HMAC queue tokens                                             | Done, with tests                      |
+| Admin API (snapshot, rate, pause, open, close, admit)         | Done, protected by `X-Admin-Key`      |
+| Redis `CounterStore`, leader lock                             | Next                                  |
+| Pass tokens, `/verify`, React page                            | Planned                               |
+| `LoadRoom`, `SaveRoom`, `SaveCounters`, `AcquireAdmitterLock` | Stubs until the Redis work            |
+| Turso store tests                                             | Skipped by choice (optional, Phase H) |
+
+Room reset was dropped on purpose: for a new event, create a new room.
 
 ## Setup
 
@@ -28,7 +29,10 @@ A virtual waiting room (Queue-it / Cloudflare Waiting Room style). Visitors ente
 TURSO_DATABASE_URL=libsql://<your-db>.turso.io
 TURSO_AUTH_TOKEN=<your-token>
 QUEUE_SECRET=<random string, 32+ characters>
+ADMIN_KEY=<random string, 32+ characters>
 ```
+
+Generate secrets with `openssl rand -hex 32`. The server exits at startup if `QUEUE_SECRET` or `ADMIN_KEY` is missing or too short.
 
 3. Run from the `backend` directory:
 
@@ -51,14 +55,14 @@ curl -s -X POST localhost:8080/rooms/demo/enter
 
 # poll status with your token
 curl -s -H "X-Queue-Token: <token>" localhost:8080/rooms/demo/status
+
+# admin: look at the room, speed it up, let 10 people in now
+curl -s -H "X-Admin-Key: $ADMIN_KEY" localhost:8080/admin/rooms/demo
+curl -s -X POST -H "X-Admin-Key: $ADMIN_KEY" -d '{"perMin":120}' localhost:8080/admin/rooms/demo/rate
+curl -s -X POST -H "X-Admin-Key: $ADMIN_KEY" -d '{"n":10}' localhost:8080/admin/rooms/demo/admit
 ```
 
-Until the admin endpoints exist, change the rate or status in the Turso shell:
-
-```sql
-UPDATE Rooms SET admit_rate_per_min = 300, status = 'open' WHERE id = 'demo';
-SELECT next_number, admitted_up_to FROM Rooms WHERE id = 'demo';
-```
+`status` reads from a cache that refreshes every second, so allow about a second for admin changes to show up there.
 
 ## Project layout
 
@@ -66,7 +70,8 @@ SELECT next_number, admitted_up_to FROM Rooms WHERE id = 'demo';
 backend/
 ├── cmd/server/
 │   ├── main.go            # wiring, router, middleware, graceful shutdown
-│   └── handlers.go        # enter and status handlers
+│   ├── handlers.go        # public handlers: enter, status
+│   └── admin_handlers.go  # admin handlers
 └── internal/
     ├── admitter/          # ticker loop that advances admitted_up_to by rate
     ├── roomcache/         # per-room RoomState cache, refreshed every second
@@ -80,6 +85,8 @@ Handlers depend on the `store.CounterStore` interface, so the Turso store can be
 
 ## Endpoints
 
+### Public
+
 | Method | Path                 | Description                                                                      |
 | ------ | -------------------- | -------------------------------------------------------------------------------- |
 | GET    | `/health`            | Health check                                                                     |
@@ -90,16 +97,38 @@ Handlers depend on the `store.CounterStore` interface, so the Turso store can be
 
 **status:** `state` is `waiting`, `admitted`, `paused` or `closed`. `ahead = max(0, number - admitted_up_to)`. `retryAfter` is 5–7 seconds (base plus jitter). `estimatedWaitSec` is `ahead * 60 / rate`, or `-1` when the rate is 0. A missing or invalid token, or one for another room, returns 401.
 
+### Admin
+
+All admin routes require the header `X-Admin-Key: <ADMIN_KEY>` and return 401 without it. Every route (except where noted) returns the room snapshot:
+
+```json
+{
+  "status": "open",
+  "admitRatePerMin": 120,
+  "nextNumber": 57,
+  "admittedUpTo": 40
+}
+```
+
+| Method | Path                      | Body              | Description                                                                                                             |
+| ------ | ------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/rooms/{id}`       | none              | Current room state, read straight from the store (not the cache)                                                        |
+| POST   | `/admin/rooms/{id}/rate`  | `{"perMin": 120}` | Set the admit rate. Must be greater than 0                                                                              |
+| POST   | `/admin/rooms/{id}/pause` | none              | Pause admissions. 409 if the room is closed                                                                             |
+| POST   | `/admin/rooms/{id}/open`  | none              | Set the room to open. Also reopens a closed room                                                                        |
+| POST   | `/admin/rooms/{id}/close` | none              | Close the room                                                                                                          |
+| POST   | `/admin/rooms/{id}/admit` | `{"n": 10}`       | Admit up to n people now, capped at the number waiting. `n` must be greater than 0. 409 if the room is paused or closed |
+
 ### Errors
 
 Every error is JSON: `{"error": "message"}`.
 
 | Status | Meaning                                                                                   |
 | ------ | ----------------------------------------------------------------------------------------- |
-| 400    | Validation or bad request                                                                 |
-| 401    | Missing, invalid or wrong-room token                                                      |
+| 400    | Validation or bad request (bad JSON, `n` or `perMin` not greater than 0)                  |
+| 401    | Missing or invalid token or admin key                                                     |
 | 404    | Room not found                                                                            |
-| 409    | Room closed                                                                               |
+| 409    | Room closed, or not open (for `admit`), or `pause` on a closed room                       |
 | 413    | Request body over 4 KB                                                                    |
 | 500    | Unexpected error. The real error is logged and the client gets a generic `internal error` |
 
@@ -107,19 +136,22 @@ Every error is JSON: `{"error": "message"}`.
 
 **Tokens.** `enter` increments `next_number` atomically and returns an HMAC-SHA256 signed token `{room_id, number, issued_at}`. `status` verifies it locally with no database call. All instances must share `QUEUE_SECRET`.
 
-**Atomic counters.** `NextNumber` and `Admit` are each a single `UPDATE ... RETURNING` statement. `Admit` is capped with `MIN(admitted_up_to + n, next_number)` and only applies to open rooms.
+**Atomic counters.** `NextNumber` and `Admit` are each a single `UPDATE ... RETURNING` statement. `Admit` is capped with `MIN(admitted_up_to + n, next_number)` and only applies to open rooms. `SetRate` and `SetStatus` are single `UPDATE`s that return `ErrNotFound` when no row matches.
 
 **Status never queries the DB per poll.** `roomcache` holds the latest `RoomState` per room behind a `sync.RWMutex`. It fills on first request and a ticker goroutine refreshes it every second. Known gap: an unknown room id hits Turso on every request (add a short negative cache later).
 
 **Admitter.** Every second it reads a snapshot, skips paused or closed rooms and a rate of 0, accumulates fractional "people credit" from the elapsed time, and admits `floor(credit)` capped at the number waiting. If `Admit` fails, the credit is kept and retried next tick. It stops on context cancellation.
 
+**Admin auth.** `authMiddleware` compares `X-Admin-Key` with the configured key using a constant-time comparison. The key is read once at startup.
+
 **Errors map to status codes in one place** (`writeError`), via sentinel errors and `errors.Is`.
+
+**Known limitation.** `pause` and `admit` read the room status and then act, so a status change in between could slip through. Fine for now.
 
 ## Roadmap
 
-1. Admin API: `Reset`, then endpoints for rate, pause/resume, admit N and reset. Decide the reset-token behaviour (token epoch vs. invalidate on reset).
-2. Redis `CounterStore` (`INCR`, atomic capped `Admit` via Lua), hydrate from Turso on boot, periodic flush to Turso, `COUNTER_STORE=turso|redis` flag.
-3. Admitter leader lock (`SET NX PX` with renewal) and a two-instance drill.
-4. Pass tokens, `POST /verify`, then the React waiting page in `frontend/`.
-5. Optional: Turso store tests (50-goroutine `NextNumber` test), load test comparing Turso vs. Redis.
+1. Redis `CounterStore` (`INCR`, atomic capped `Admit` via Lua), hydrate from Turso on boot, periodic flush to Turso, `COUNTER_STORE=turso|redis` flag.
+2. Admitter leader lock (`SET NX PX` with renewal) and a two-instance drill.
+3. Pass tokens, `POST /verify`, then the React waiting page in `frontend/`.
+4. Optional: Turso store tests (50-goroutine `NextNumber` test), load test comparing Turso vs. Redis.
    The full plan lives in the project doc `queue-app-plan.md`.
