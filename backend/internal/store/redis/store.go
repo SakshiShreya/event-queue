@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"queue-app/internal/store"
@@ -21,8 +22,10 @@ func New(client *goredis.Client) *Store {
 	return &Store{client: client}
 }
 
-func statusKey(roomID string) string     { return "room:" + roomID + ":status" }
-func nextNumberKey(roomID string) string { return "room:" + roomID + ":next_number" }
+func statusKey(roomID string) string       { return "room:" + roomID + ":status" }
+func nextNumberKey(roomID string) string   { return "room:" + roomID + ":next_number" }
+func rateKey(roomID string) string         { return "room:" + roomID + ":rate" }
+func admittedUpToKey(roomID string) string { return "room:" + roomID + ":admitted_up_to" }
 
 // nextNumberScript runs atomically inside Redis.
 // KEYS[1] = status key, KEYS[2] = next_number key.
@@ -55,10 +58,60 @@ func (s *Store) NextNumber(ctx context.Context, roomID string) (int64, error) {
 	return n, nil
 }
 
-// The methods below are filled in later (Snapshot next, the rest in Week 12).
-
 func (s *Store) Snapshot(ctx context.Context, roomID string) (store.RoomState, error) {
-	return store.RoomState{}, errNotImplemented
+	vals, err := s.client.MGet(ctx,
+		statusKey(roomID),
+		rateKey(roomID),
+		nextNumberKey(roomID),
+		admittedUpToKey(roomID),
+	).Result()
+	if err != nil {
+		return store.RoomState{}, fmt.Errorf("snapshot for room %q: %w", roomID, err)
+	}
+
+	// vals[0] is the status; a missing status key means the room doesn't exist
+	statusStr, ok := vals[0].(string)
+	if !ok {
+		return store.RoomState{}, store.ErrNotFound
+	}
+	status := store.Status(statusStr)
+	switch status {
+	case store.StatusOpen, store.StatusPaused, store.StatusClosed:
+	default:
+		return store.RoomState{}, fmt.Errorf("room %q has unknown status %q", roomID, statusStr)
+	}
+
+	rate, err := toInt64(vals[1])
+	if err != nil {
+		return store.RoomState{}, fmt.Errorf("room %q rate: %w", roomID, err)
+	}
+	nextNumber, err := toInt64(vals[2])
+	if err != nil {
+		return store.RoomState{}, fmt.Errorf("room %q next_number: %w", roomID, err)
+	}
+	admittedUpTo, err := toInt64(vals[3])
+	if err != nil {
+		return store.RoomState{}, fmt.Errorf("room %q admitted_up_to: %w", roomID, err)
+	}
+
+	return store.RoomState{
+		Status:          status,
+		AdmitRatePerMin: rate,
+		NextNumber:      nextNumber,
+		AdmittedUpTo:    admittedUpTo,
+	}, nil
+}
+
+// toInt64 converts an MGET value: nil (key missing) means 0, a string is parsed.
+func toInt64(v any) (int64, error) {
+	if v == nil {
+		return 0, nil
+	}
+	str, ok := v.(string)
+	if !ok {
+		return 0, fmt.Errorf("unexpected type %T", v)
+	}
+	return strconv.ParseInt(str, 10, 64)
 }
 
 func (s *Store) Admit(ctx context.Context, roomID string, n int64) (int64, error) {
