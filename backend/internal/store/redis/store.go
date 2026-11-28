@@ -12,8 +12,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-var errNotImplemented = errors.New("not implemented")
-
 type Store struct {
 	client *goredis.Client
 }
@@ -40,6 +38,28 @@ if status == 'closed' then
 	return -2
 end
 return redis.call('INCR', KEYS[2])
+`)
+
+// KEYS: [1] is statusKey, [2] is nextNumberKey, [3] is admittedUpToKey
+// ARGV: [1] is n, which you pass from Go
+// Returns: -1 if the room doesn't exist, which maps to ErrNotFound. -2 if the room is paused or closed,
+// which maps to ErrRoomNotOpen. Otherwise the new admitted_up_to
+var admitScript = goredis.NewScript(`
+local status = redis.call('GET', KEYS[1])
+if not status then
+	return -1
+end
+if status ~= 'open' then
+	return -2
+end
+
+local n = tonumber(ARGV[1])
+local nextNumber = tonumber(redis.call('GET', KEYS[2]) or '0')
+local admitted = tonumber(redis.call('GET', KEYS[3]) or '0')
+
+local newAdmitted = math.max(admitted, math.min(admitted + n, nextNumber))
+redis.call('SET', KEYS[3], newAdmitted)
+return newAdmitted
 `)
 
 func (s *Store) NextNumber(ctx context.Context, roomID string) (int64, error) {
@@ -115,18 +135,54 @@ func toInt64(v any) (int64, error) {
 }
 
 func (s *Store) Admit(ctx context.Context, roomID string, n int64) (int64, error) {
-	return 0, errNotImplemented
+	if n <= 0 {
+		return 0, store.ErrValidation
+	}
+	newAdmitted, err := admitScript.Run(ctx, s.client,
+		[]string{statusKey(roomID), nextNumberKey(roomID), admittedUpToKey(roomID)}, n).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("next number for room %q: %w", roomID, err)
+	}
+
+	switch newAdmitted {
+	case -1:
+		return 0, store.ErrNotFound
+	case -2:
+		return 0, store.ErrRoomNotOpen
+	}
+	return newAdmitted, nil
 }
 
 func (s *Store) SetStatus(ctx context.Context, roomID string, status store.Status) error {
-	return errNotImplemented
+	ok, err := s.client.SetXX(ctx, statusKey(roomID), string(status), 0).Result()
+
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return store.ErrNotFound
+	}
+
+	return nil
 }
 
 func (s *Store) SetRate(ctx context.Context, roomID string, admitRatePerMin int64) error {
-	return errNotImplemented
+	ok, err := s.client.SetXX(ctx, rateKey(roomID), admitRatePerMin, 0).Result()
+
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return store.ErrNotFound
+	}
+
+	return nil
 }
 
 func (s *Store) AcquireAdmitterLock(ctx context.Context, roomID string, ttl time.Duration) (bool, error) {
+	var errNotImplemented = errors.New("not implemented")
 	return false, errNotImplemented
 }
 
